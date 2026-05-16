@@ -53,8 +53,8 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(({ lat, lng, markers = [
   <div id="map"></div>
   <script>
     var map = L.map('map').setView([${lat}, ${lng}], 15);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap'
+    L.tileLayer('https://tiles.openfreemap.org/styles/liberty/{z}/{x}/{y}.png', {
+      attribution: '© OpenFreeMap © OpenStreetMap contributors'
     }).addTo(map);
     ${markersJs}
   </script>
