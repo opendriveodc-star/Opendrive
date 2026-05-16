@@ -1,0 +1,7 @@
+name = "opendrive-turn-credentials"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+# Secrets (set via: wrangler secret put SECRET_NAME)
+# CLOUDFLARE_TURN_KEY_ID
+# CLOUDFLARE_API_TOKEN

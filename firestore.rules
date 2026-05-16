@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isLoggedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isLoggedIn() && request.auth.uid == uid;
+    }
+
+    function isDriver() {
+      return isLoggedIn() &&
+        exists(/databases/$(database)/documents/drivers/$(request.auth.uid));
+    }
+
+    // Các field client không được tự thay đổi
+    function protectedFieldsUnchanged() {
+      return request.resource.data.rating              == resource.data.rating
+          && request.resource.data.firstTripDone       == resource.data.firstTripDone
+          && request.resource.data.referralCount       == resource.data.referralCount
+          && request.resource.data.stellarWallet       == resource.data.stellarWallet
+          && request.resource.data.encryptedPrivateKey == resource.data.encryptedPrivateKey
+          && request.resource.data.phone               == resource.data.phone
+          && request.resource.data.uid                 == resource.data.uid;
+    }
+
+    match /drivers/{uid} {
+      // Đọc: chỉ chủ tài khoản (encryptedPrivateKey blob vô nghĩa nếu không có MASTER_ENCRYPTION_KEY)
+      allow read: if isOwner(uid);
+
+      // Tạo: client ghi 1 lần duy nhất sau khi nhận thông tin ví từ Worker
+      allow create: if isOwner(uid)
+        && !exists(/databases/$(database)/documents/drivers/$(uid))
+        && request.resource.data.keys().hasAll([
+            'uid', 'phone', 'name', 'vehicleType', 'vehicleBrand',
+            'licensePlate', 'geohash', 'status', 'rating',
+            'stellarWallet', 'encryptedPrivateKey', 'firstTripDone',
+            'referralCount', 'termsAcceptedAt', 'termsVersion', 'updatedAt'
+           ])
+        && request.resource.data.stellarWallet       != null
+        && request.resource.data.encryptedPrivateKey != null
+        && request.resource.data.rating        == 0
+        && request.resource.data.status        == 'offline'
+        && request.resource.data.firstTripDone == false
+        && request.resource.data.referralCount == 0
+        && request.resource.data.vehicleType.matches('^(motorbike|car4|car7|pickup)$');
+
+      // Sửa: chỉ chủ tài khoản, không được thay đổi các field được bảo vệ
+      // stellarWallet + encryptedPrivateKey khóa vĩnh viễn – mỗi UID gắn với 1 ví mãi mãi
+      allow update: if isOwner(uid)
+        && protectedFieldsUnchanged()
+        && request.resource.data.status.matches('^(ready|busy|offline)$')
+        && request.resource.data.vehicleType.matches('^(motorbike|car4|car7|pickup)$');
+
+      allow delete: if false;
+    }
+
+    match /blacklist_customers/{uid} {
+      // Tài xế đọc được để kiểm tra khách trước khi nhận chuyến
+      allow read: if isDriver();
+      // Chỉ Admin SDK (Worker) mới được ghi
+      allow write: if false;
+    }
+
+    match /miners/{uid} {
+      // Chỉ chủ tài khoản đọc/ghi document của chính mình
+      allow read: if isOwner(uid);
+
+      // Tạo: client tự tạo khi đăng ký lần đầu
+      allow create: if isOwner(uid)
+        && !exists(/databases/$(database)/documents/miners/$(uid))
+        && request.resource.data.keys().hasAll(['uid', 'phone', 'points', 'sessionCount', 'lastMiningDate'])
+        && request.resource.data.points       == 0
+        && request.resource.data.sessionCount == 0;
+
+      // Sửa: client KHÔNG được tự sửa points (chỉ Worker Admin SDK mới cộng điểm)
+      allow update: if false;
+
+      allow delete: if false;
+    }
+
+    // Deny all other documents
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

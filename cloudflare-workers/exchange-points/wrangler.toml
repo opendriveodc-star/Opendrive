@@ -1,0 +1,11 @@
+name = "opendrive-exchange-points"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+# Secrets (set via: wrangler secret put SECRET_NAME)
+# FIREBASE_SERVICE_ACCOUNT
+# FIREBASE_PROJECT_ID
+# STELLAR_DISTRIBUTOR_PRIVATE_KEY
+# STELLAR_ISSUER_ADDRESS
+# STELLAR_FEEBUMP_PRIVATE_KEY
+# STELLAR_NETWORK

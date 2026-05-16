@@ -1,0 +1,200 @@
+{
+  "common": {
+    "appName":    "OpenDrive",
+    "confirm":    "Confirm",
+    "cancel":     "Cancel",
+    "continue":   "Continue",
+    "back":       "Back",
+    "save":       "Save",
+    "close":      "Close",
+    "loading":    "Loading...",
+    "error":      "An error occurred",
+    "retry":      "Retry",
+    "success":    "Success",
+    "language":   "Language",
+    "vietnamese": "Tiếng Việt",
+    "english":    "English",
+    "odc":        "ODC",
+    "balance":    "Balance"
+  },
+  "auth": {
+    "enterPhone":       "Enter phone number",
+    "phonePlaceholder": "Phone number",
+    "sendOTP":          "Send OTP",
+    "enterOTP":         "Enter OTP",
+    "otpSent":          "OTP sent to {{phone}}",
+    "otpPlaceholder":   "Enter 6-digit code",
+    "verifying":        "Verifying...",
+    "resendOTP":        "Resend OTP",
+    "resendIn":         "Resend in {{seconds}}s"
+  },
+  "terms": {
+    "title":       "Terms of Service",
+    "readAndAgree": "I have read and agree to the",
+    "termsLink":   "Terms of Service",
+    "mustAgree":   "Please agree to the terms to continue",
+    "updated":     "Terms of Service updated",
+    "mustReAgree": "Please read and agree to the new terms to continue"
+  },
+  "register": {
+    "title":               "Driver Registration",
+    "name":                "Full name",
+    "namePlaceholder":     "Enter your full name",
+    "vehicleType":         "Vehicle type",
+    "motorbike":           "Motorbike",
+    "car4":                "4-seat car",
+    "car7":                "7-seat car",
+    "pickup":              "Pickup truck",
+    "vehicleBrand":        "Vehicle brand",
+    "brandPlaceholder":    "E.g. Honda, Yamaha...",
+    "licensePlate":        "License plate",
+    "platePlaceholder":    "E.g. 51G-12345",
+    "referralCode":        "Referral code (optional)",
+    "referralPlaceholder": "Enter code if available",
+    "creating":            "Creating account...",
+    "welcome":             "Welcome {{name}}!",
+    "welcomeBonus":        "You received 100 ODC to get started"
+  },
+  "roleSelect": {
+    "title":      "Tell me who you are",
+    "driver":     "I'm a Driver",
+    "customer":   "I'm a Passenger",
+    "miner":      "Mine Coins",
+    "changeRole": "Switch role"
+  },
+  "driver": {
+    "title":     "Driver",
+    "goOnline":  "Go Online",
+    "goOffline": "Go Offline",
+    "status": {
+      "ready":   "Available",
+      "busy":    "On a trip",
+      "offline": "Offline"
+    },
+    "rating":   "Rating: {{rating}}⭐ ({{count}} trips)",
+    "balance":  "Balance: {{amount}} ODC",
+    "settings": "Auto quote settings",
+    "history":  "Trip history"
+  },
+  "autoQuote": {
+    "title":          "Auto Quote Settings",
+    "enable":         "Enable auto quote",
+    "baseKm":         "First km",
+    "basePrice":      "First km price (VND)",
+    "pricePerKm":     "Price per additional km (VND/km)",
+    "peakMultiplier": "Peak hour multiplier",
+    "rainMultiplier": "Rain multiplier",
+    "rainMode":       "Raining 🌧",
+    "sunnyMode":      "Sunny ☀️",
+    "minKm":          "Minimum km",
+    "maxKm":          "Maximum km",
+    "save":           "Save settings"
+  },
+  "trip": {
+    "title":            "Book a ride",
+    "pickup":           "Pickup location",
+    "pickupPlaceholder": "Enter pickup location",
+    "destination":      "Destination",
+    "destPlaceholder":  "Enter destination",
+    "vehicleType":      "Vehicle type",
+    "findDriver":       "Find driver",
+    "searching":        "Searching for drivers...",
+    "noDriver":         "No drivers found, please try again",
+    "quotes":           "Driver quotes",
+    "selectDriver":     "Select driver",
+    "distance":         "{{km}} km",
+    "price":            "{{amount}} VND",
+    "driverComing":     "Driver is on the way",
+    "driverArrived":    "Driver has arrived",
+    "inProgress":       "Trip in progress",
+    "completed":        "Trip completed",
+    "connected":        "Connection established",
+    "connecting":       "Connecting to driver...",
+    "rateDriver":       "Rate your driver",
+    "ratePlaceholder":  "Select star rating"
+  },
+  "cancel": {
+    "title":          "Cancel trip",
+    "confirm":        "Are you sure you want to cancel?",
+    "penaltyWarning": "Cancelling will cost {{amount}} ODC",
+    "noPenalty":      "Free cancellation",
+    "yes":            "Cancel trip",
+    "no":             "Keep trip"
+  },
+  "lock": {
+    "title":   "Account temporarily locked",
+    "reason": {
+      "cancelTrip":    "You cancelled an ongoing trip",
+      "fraudDetected": "Suspicious activity detected",
+      "lowRating":     "Rating too low"
+    },
+    "unlockIn": "Unlocks in: {{time}}",
+    "unlocked": "Account unlocked"
+  },
+  "pending": {
+    "title":      "You have an incomplete trip",
+    "message":    "App was closed during an active trip. Please complete this trip.",
+    "complete":   "Complete trip",
+    "completing": "Recording on blockchain..."
+  },
+  "mining": {
+    "title":          "Mine ODC",
+    "points":         "Points: {{points}}",
+    "sessionsLeft":   "{{count}} sessions left today",
+    "noSessions":     "No sessions left today, come back tomorrow",
+    "start":          "Start mining",
+    "stop":           "Stop mining",
+    "rounds":         "{{count}} rounds",
+    "maxRounds":      "Maximum 100 rounds reached",
+    "minRounds":      "Need at least 10 rounds to save points",
+    "watchAd":        "Watch ads to earn points",
+    "adLoading":      "Loading ad...",
+    "exchange":       "Exchange points for ODC",
+    "exchangeMin":    "Minimum 10 points",
+    "exchangeFee":    "Fee: 0.1 ODC/exchange",
+    "walletAddress":  "Stellar wallet address to receive ODC",
+    "walletPlaceholder": "G...",
+    "exchangeConfirm": "Exchange {{points}} points → {{odc}} ODC?"
+  },
+  "history": {
+    "title":       "Trip history",
+    "empty":       "No trips yet",
+    "date":        "Date: {{date}}",
+    "price":       "Price: {{amount}} VND",
+    "odc":         "ODC: -{{amount}}",
+    "rating":      "Rating: {{value}}⭐",
+    "txHash":      "Blockchain ID: {{hash}}",
+    "viewOnChain": "View on blockchain"
+  },
+  "settings": {
+    "title":          "Settings",
+    "language":       "Language",
+    "chooseLanguage": "Choose language",
+    "profile":        "Profile",
+    "vehicle":        "Vehicle info",
+    "wallet":         "Stellar wallet",
+    "referral":       "Referral",
+    "referralCode":   "Your code: {{code}}",
+    "copyCode":       "Copy code",
+    "copied":         "Copied!",
+    "terms":          "Terms of Service",
+    "privacy":        "Privacy Policy",
+    "logout":         "Log out",
+    "logoutConfirm":  "Are you sure you want to log out?"
+  },
+  "network": {
+    "wifiWarning":  "Use 4G/5G instead of WiFi for better connection",
+    "noInternet":   "No internet connection",
+    "reconnecting": "Reconnecting..."
+  },
+  "error": {
+    "insufficientODC": "Insufficient ODC balance",
+    "walletNotFound":  "Wallet not found",
+    "networkError":    "Network error",
+    "serverError":     "Server error, please try again",
+    "invalidPhone":    "Invalid phone number",
+    "invalidOTP":      "Invalid OTP code",
+    "sessionExpired":  "Session expired",
+    "unknown":         "Unknown error"
+  }
+}

@@ -1,0 +1,200 @@
+{
+  "common": {
+    "appName":        "OpenDrive",
+    "confirm":        "Xác nhận",
+    "cancel":         "Hủy",
+    "continue":       "Tiếp tục",
+    "back":           "Quay lại",
+    "save":           "Lưu",
+    "close":          "Đóng",
+    "loading":        "Đang tải...",
+    "error":          "Có lỗi xảy ra",
+    "retry":          "Thử lại",
+    "success":        "Thành công",
+    "language":       "Ngôn ngữ",
+    "vietnamese":     "Tiếng Việt",
+    "english":        "English",
+    "odc":            "ODC",
+    "balance":        "Số dư"
+  },
+  "auth": {
+    "enterPhone":       "Nhập số điện thoại",
+    "phonePlaceholder": "Số điện thoại",
+    "sendOTP":          "Gửi mã OTP",
+    "enterOTP":         "Nhập mã OTP",
+    "otpSent":          "Mã OTP đã gửi đến {{phone}}",
+    "otpPlaceholder":   "Nhập mã 6 số",
+    "verifying":        "Đang xác thực...",
+    "resendOTP":        "Gửi lại mã",
+    "resendIn":         "Gửi lại sau {{seconds}}s"
+  },
+  "terms": {
+    "title":       "Điều khoản sử dụng",
+    "readAndAgree": "Tôi đã đọc và đồng ý với",
+    "termsLink":   "Điều khoản sử dụng",
+    "mustAgree":   "Vui lòng đồng ý điều khoản để tiếp tục",
+    "updated":     "Điều khoản đã được cập nhật",
+    "mustReAgree": "Vui lòng đọc và đồng ý điều khoản mới để tiếp tục"
+  },
+  "register": {
+    "title":               "Đăng ký tài xế",
+    "name":                "Họ và tên",
+    "namePlaceholder":     "Nhập họ tên của bạn",
+    "vehicleType":         "Loại xe",
+    "motorbike":           "Xe máy",
+    "car4":                "Ô tô 4 chỗ",
+    "car7":                "Ô tô 7 chỗ",
+    "pickup":              "Xe bán tải",
+    "vehicleBrand":        "Hãng xe",
+    "brandPlaceholder":    "VD: Honda, Yamaha...",
+    "licensePlate":        "Biển số xe",
+    "platePlaceholder":    "VD: 51G-12345",
+    "referralCode":        "Mã giới thiệu (tùy chọn)",
+    "referralPlaceholder": "Nhập mã nếu có",
+    "creating":            "Đang tạo tài khoản...",
+    "welcome":             "Chào mừng {{name}}!",
+    "welcomeBonus":        "Bạn nhận được 100 ODC để bắt đầu"
+  },
+  "roleSelect": {
+    "title":       "Hãy cho tôi biết bạn là ai",
+    "driver":      "Tôi là Tài Xế",
+    "customer":    "Tôi là Khách",
+    "miner":       "Đào Coin",
+    "changeRole":  "Đổi vai trò"
+  },
+  "driver": {
+    "title":    "Tài xế",
+    "goOnline": "Bật sẵn sàng",
+    "goOffline": "Tắt sẵn sàng",
+    "status": {
+      "ready":   "Đang sẵn sàng",
+      "busy":    "Đang có chuyến",
+      "offline": "Ngoại tuyến"
+    },
+    "rating":   "Đánh giá: {{rating}}⭐ ({{count}} chuyến)",
+    "balance":  "Số dư: {{amount}} ODC",
+    "settings": "Cài đặt báo giá tự động",
+    "history":  "Lịch sử chuyến"
+  },
+  "autoQuote": {
+    "title":          "Cài đặt báo giá tự động",
+    "enable":         "Bật báo giá tự động",
+    "baseKm":         "Số km đầu tiên",
+    "basePrice":      "Giá km đầu tiên (đ)",
+    "pricePerKm":     "Đơn giá từ km tiếp theo (đ/km)",
+    "peakMultiplier": "Hệ số giờ cao điểm",
+    "rainMultiplier": "Hệ số trời mưa",
+    "rainMode":       "Đang mưa 🌧",
+    "sunnyMode":      "Trời nắng ☀️",
+    "minKm":          "Km tối thiểu",
+    "maxKm":          "Km tối đa",
+    "save":           "Lưu cài đặt"
+  },
+  "trip": {
+    "title":            "Đặt xe",
+    "pickup":           "Điểm đón",
+    "pickupPlaceholder": "Nhập điểm đón",
+    "destination":      "Điểm đến",
+    "destPlaceholder":  "Nhập điểm đến",
+    "vehicleType":      "Loại xe",
+    "findDriver":       "Tìm tài xế",
+    "searching":        "Đang tìm tài xế...",
+    "noDriver":         "Không tìm thấy tài xế, thử lại sau",
+    "quotes":           "Báo giá từ tài xế",
+    "selectDriver":     "Chọn tài xế",
+    "distance":         "{{km}} km",
+    "price":            "{{amount}}đ",
+    "driverComing":     "Tài xế đang đến",
+    "driverArrived":    "Tài xế đã đến điểm đón",
+    "inProgress":       "Đang di chuyển",
+    "completed":        "Chuyến đã hoàn thành",
+    "connected":        "Đã kết nối",
+    "connecting":       "Đang kết nối với tài xế...",
+    "rateDriver":       "Đánh giá tài xế",
+    "ratePlaceholder":  "Chọn số sao"
+  },
+  "cancel": {
+    "title":          "Hủy chuyến",
+    "confirm":        "Bạn có chắc muốn hủy chuyến?",
+    "penaltyWarning": "Hủy chuyến sẽ bị phạt {{amount}} ODC",
+    "noPenalty":      "Hủy chuyến miễn phí",
+    "yes":            "Hủy chuyến",
+    "no":             "Không hủy"
+  },
+  "lock": {
+    "title":   "Tài khoản bị tạm khóa",
+    "reason": {
+      "cancelTrip":    "Bạn đã hủy chuyến khi đang thực hiện",
+      "fraudDetected": "Phát hiện dấu hiệu gian lận",
+      "lowRating":     "Đánh giá quá thấp"
+    },
+    "unlockIn": "Mở khóa sau: {{time}}",
+    "unlocked": "Tài khoản đã được mở khóa"
+  },
+  "pending": {
+    "title":      "Bạn có chuyến chưa hoàn thành",
+    "message":    "App bị tắt trong lúc đang chạy chuyến. Vui lòng hoàn tất chuyến này.",
+    "complete":   "Hoàn thành chuyến",
+    "completing": "Đang ghi blockchain..."
+  },
+  "mining": {
+    "title":          "Đào ODC",
+    "points":         "Điểm tích lũy: {{points}}",
+    "sessionsLeft":   "Còn {{count}} phiên hôm nay",
+    "noSessions":     "Hết phiên đào hôm nay, quay lại ngày mai",
+    "start":          "Bắt đầu đào",
+    "stop":           "Dừng đào",
+    "rounds":         "{{count}} lượt",
+    "maxRounds":      "Đạt tối đa 100 lượt",
+    "minRounds":      "Cần ít nhất 10 lượt để lưu điểm",
+    "watchAd":        "Xem quảng cáo để kiếm điểm",
+    "adLoading":      "Đang tải quảng cáo...",
+    "exchange":       "Đổi điểm lấy ODC",
+    "exchangeMin":    "Tối thiểu 10 điểm",
+    "exchangeFee":    "Phí: 0.1 ODC/lần",
+    "walletAddress":  "Địa chỉ ví Stellar nhận ODC",
+    "walletPlaceholder": "G...",
+    "exchangeConfirm": "Đổi {{points}} điểm → {{odc}} ODC?"
+  },
+  "history": {
+    "title":       "Lịch sử chuyến",
+    "empty":       "Chưa có chuyến nào",
+    "date":        "Ngày: {{date}}",
+    "price":       "Giá: {{amount}}đ",
+    "odc":         "ODC: -{{amount}}",
+    "rating":      "Đánh giá: {{value}}⭐",
+    "txHash":      "Mã blockchain: {{hash}}",
+    "viewOnChain": "Xem trên blockchain"
+  },
+  "settings": {
+    "title":          "Cài đặt",
+    "language":       "Ngôn ngữ",
+    "chooseLanguage": "Chọn ngôn ngữ",
+    "profile":        "Thông tin cá nhân",
+    "vehicle":        "Thông tin xe",
+    "wallet":         "Ví Stellar",
+    "referral":       "Mã giới thiệu",
+    "referralCode":   "Mã của bạn: {{code}}",
+    "copyCode":       "Sao chép mã",
+    "copied":         "Đã sao chép!",
+    "terms":          "Điều khoản sử dụng",
+    "privacy":        "Chính sách bảo mật",
+    "logout":         "Đăng xuất",
+    "logoutConfirm":  "Bạn có chắc muốn đăng xuất?"
+  },
+  "network": {
+    "wifiWarning":  "Nên dùng 4G/5G thay vì WiFi để kết nối ổn định hơn",
+    "noInternet":   "Không có kết nối mạng",
+    "reconnecting": "Đang kết nối lại..."
+  },
+  "error": {
+    "insufficientODC": "Số dư ODC không đủ",
+    "walletNotFound":  "Không tìm thấy ví",
+    "networkError":    "Lỗi kết nối mạng",
+    "serverError":     "Lỗi máy chủ, thử lại sau",
+    "invalidPhone":    "Số điện thoại không hợp lệ",
+    "invalidOTP":      "Mã OTP không đúng",
+    "sessionExpired":  "Phiên đăng nhập hết hạn",
+    "unknown":         "Lỗi không xác định"
+  }
+}

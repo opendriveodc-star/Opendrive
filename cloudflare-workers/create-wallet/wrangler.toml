@@ -1,0 +1,12 @@
+name = "opendrive-create-wallet"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+STELLAR_NETWORK = "testnet"
+
+# Secrets (set via: wrangler secret put SECRET_NAME)
+# MASTER_ENCRYPTION_KEY
+# STELLAR_ISSUER_PRIVATE_KEY
+# STELLAR_FEEBUMP_PRIVATE_KEY
+# STELLAR_ISSUER_ADDRESS

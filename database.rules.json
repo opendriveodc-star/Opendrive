@@ -1,0 +1,43 @@
+{
+  "rules": {
+    "trips": {
+      "$tripId": {
+        "info": {
+          ".read":     "auth != null",
+          ".write":    "auth != null && !data.exists()",
+          ".validate": "newData.hasChildren(['customerPhone', 'pickupGeohash', 'dropGeohash', 'vehicleType', 'createdAt']) && newData.child('vehicleType').val().matches(/^(motorbike|car4|car7|pickup)$/) && newData.child('createdAt').isNumber()"
+        },
+        "quotes": {
+          ".read": "auth != null",
+          "$driverUid": {
+            ".write":    "auth != null && auth.uid == $driverUid",
+            ".validate": "newData.hasChildren(['quotedPrice', 'estimatedDistance', 'driverName', 'rating', 'vehicleInfo', 'driverUid', 'createdAt']) && newData.child('quotedPrice').isNumber() && newData.child('quotedPrice').val() > 0"
+          }
+        },
+        "ice": {
+          ".read": "auth != null",
+          "customer": {
+            ".write":    "auth != null",
+            ".validate": "newData.hasChildren(['candidates'])"
+          },
+          "driver": {
+            ".write":    "auth != null",
+            ".validate": "newData.hasChildren(['candidates'])"
+          }
+        },
+        ".write": "auth != null && !newData.exists()"
+      }
+    },
+    "drivers_online": {
+      "$uid": {
+        ".read":     "auth != null",
+        ".write":    "auth != null && auth.uid == $uid",
+        ".validate": "newData.hasChildren(['lastSeen']) && newData.child('lastSeen').isNumber() && newData.child('lastSeen').val() <= now"
+      }
+    },
+    "$other": {
+      ".read":  false,
+      ".write": false
+    }
+  }
+}

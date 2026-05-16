@@ -1,0 +1,7 @@
+name = "opendrive-mining-report"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+# Secrets (set via: wrangler secret put SECRET_NAME)
+# FIREBASE_SERVICE_ACCOUNT
+# FIREBASE_PROJECT_ID

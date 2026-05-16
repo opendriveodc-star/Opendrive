@@ -1,0 +1,94 @@
+{
+  "expo": {
+    "name": "OpenDrive",
+    "slug": "opendrive",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1A56DB"
+    },
+    "scheme": "opendrive",
+    "plugins": [
+      "expo-router",
+      [
+        "@config-plugins/react-native-webrtc"
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "OpenDrive cần vị trí để tìm tài xế gần bạn",
+          "locationAlwaysAndWhenInUsePermission": "OpenDrive cần vị trí để cập nhật vị trí tài xế liên tục",
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-secure-store"
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#1A56DB",
+          "sounds": []
+        }
+      ]
+    ],
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1A56DB"
+      },
+      "package": "com.opendrive.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "CAMERA",
+        "MODIFY_AUDIO_SETTINGS",
+        "RECORD_AUDIO",
+        "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED",
+        "com.google.android.c2dm.permission.RECEIVE",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
+      ],
+      "allowBackup": false
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.opendrive.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "OpenDrive cần vị trí để tìm tài xế gần bạn",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "OpenDrive cần vị trí để cập nhật liên tục",
+        "NSMicrophoneUsageDescription": "Cần microphone cho kết nối WebRTC",
+        "NSCameraUsageDescription": "Cần camera cho kết nối WebRTC"
+      },
+      "bitcode": false
+    },
+    "extra": {
+      "eas": {
+        "projectId": "be952562-1ee2-41c0-b74f-e9741042862b"
+      },
+      "router": {
+        "origin": false
+      }
+    }
+  }
+}

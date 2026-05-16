@@ -1,0 +1,10 @@
+name = "opendrive-cleanup-trips"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+[triggers]
+crons = ["0 20 * * *"]
+
+# Secrets (set via: wrangler secret put SECRET_NAME)
+# FIREBASE_DATABASE_URL
+# FIREBASE_SERVICE_ACCOUNT
