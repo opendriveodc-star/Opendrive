@@ -2,7 +2,8 @@
 // Firebase Auth + Realtime Database (REST API only – không dùng SDK listener)
 
 import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { initializeAuth, getAuth, getReactNativePersistence } from 'firebase/auth'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { FIREBASE } from '../constants'
 
 const firebaseConfig = {
@@ -15,8 +16,17 @@ const firebaseConfig = {
   appId:             FIREBASE.appId,
 }
 
-const app  = initializeApp(firebaseConfig)
-export const auth = getAuth(app)
+const app = initializeApp(firebaseConfig)
+
+let auth: ReturnType<typeof getAuth>
+try {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  })
+} catch {
+  auth = getAuth(app)
+}
+export { auth }
 
 // ─── Realtime Database via REST (không dùng SDK listener) ────────────────────
 

@@ -4,19 +4,24 @@
 import { useState, useRef } from 'react'
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha'
 import { useTranslation } from 'react-i18next'
 import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth'
 import type { UserRole } from '../../src/types'
 import { auth } from '../../src/services/firebase'
-import { FIREBASE } from '../../src/constants'
+
+// Mock reCAPTCHA verifier – hoạt động với Firebase test phone numbers
+// Production: thay bằng @react-native-firebase/auth khi cần real OTP
+const mockRecaptchaVerifier = {
+  type: 'recaptcha' as const,
+  verify: () => Promise.resolve('test-token'),
+}
 
 export default function PhoneAuthScreen() {
   const { t }   = useTranslation()
   const params  = useLocalSearchParams<{ role: UserRole }>()
   const role    = params.role ?? 'customer'
 
-  const recaptchaVerifier = useRef<any>(null)
+  const recaptchaVerifier = useRef(mockRecaptchaVerifier)
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState('')
   const [step, setStep] = useState<'phone' | 'otp'>('phone')
@@ -91,11 +96,6 @@ export default function PhoneAuthScreen() {
 
   return (
     <View style={styles.container}>
-      <FirebaseRecaptchaVerifierModal
-        ref={recaptchaVerifier}
-        firebaseConfig={FIREBASE}
-        attemptInvisibleVerification
-      />
       <Text style={styles.title}>
         {step === 'phone' ? t('auth.enterPhone') : t('auth.enterOTP')}
       </Text>
