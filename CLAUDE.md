@@ -7,7 +7,7 @@
 
 ## 0. TRẠNG THÁI HIỆN TẠI *(cập nhật mỗi khi kết thúc session)*
 
-**Cập nhật lần cuối:** 2026-05-16
+**Cập nhật lần cuối:** 2026-05-16 (session 2)
 
 ### ✅ Đã hoàn thành – Scaffold + Core Implementation + Bug Fixes + Hạ Tầng
 Toàn bộ 66 file skeleton đã được tạo tại `D:\OpenDrive\`. Đã implement các luồng core chính với Firebase, WebRTC, và Cloudflare Workers. Đã fix toàn bộ bugs, deploy hạ tầng hoàn chỉnh.
@@ -41,14 +41,16 @@ Toàn bộ 66 file skeleton đã được tạo tại `D:\OpenDrive\`. Đã impl
 | **Hạ tầng Cloudflare** | 8 workers deployed, tất cả secrets đã set | ✅ **Xong** |
 | **Hạ tầng Stellar** | 4 ví testnet, 1B ODC phát hành, secrets set vào Workers | ✅ **Xong** |
 | **TURN Server** | Cloudflare Realtime TURN activated, worker fix + deploy | ✅ **Xong** |
+| **MapView** | WebView + Leaflet.js + OpenStreetMap, real-time marker qua injectJavaScript | ✅ **Xong** |
+| **EAS Build setup** | Git, EAS CLI, projectId, assets, .npmrc, package versions đồng bộ SDK 53 | ✅ **Xong** |
 
 ### 🔲 Việc cần làm tiếp theo (theo thứ tự)
 
-**Bước 4 – EAS Build lần đầu** *(chưa làm)*
-- [ ] Tạo tài khoản Expo → `eas login`
-- [ ] `eas build:configure`
-- [ ] `eas build --profile development --platform android`
-- [ ] Cài APK lên thiết bị/emulator → chạy thử
+**Bước 4 – EAS Build lần đầu** *(đang thực hiện)*
+- [x] Tạo tài khoản Expo → `eas login` ✅
+- [x] `eas build:configure` → projectId đã set ✅
+- [ ] `eas build --profile development --platform android` → đang fix lỗi build
+- [ ] Cài APK lên emulator Android Studio (Pixel 6 API 33 Google Play)
 - [ ] iOS: chờ Apple Developer account kích hoạt → build iOS sau
 
 **Bước 5 – Implement từng Phase còn lại** *(theo mục 9 bên dưới)*
@@ -58,6 +60,22 @@ Toàn bộ 66 file skeleton đã được tạo tại `D:\OpenDrive\`. Đã impl
 - [x] Phase 4: WebRTC – Signaling + TURN ✅
 - [x] Phase 5: Trong chuyến & Hoàn thành – recordTrip + rating ✅
 - [ ] Phase 6: Polish & Monetization (AdMob interstitial, UI polish)
+
+### 📌 Ghi chú session 2026-05-16 (session 2)
+- **MapView:** Đã thay MapLibre (không tương thích RN 0.79) bằng WebView + Leaflet.js + OpenStreetMap
+  - Hoàn toàn miễn phí, không cần API key
+  - Real-time tracking: `injectJavaScript` cập nhật marker khi nhận vị trí từ WebRTC DataChannel
+  - `MapViewHandle` ref expose `updateDriverMarker(lat, lng)`
+  - MapLibre yêu cầu RN ≥ 0.80 + React ≥ 19.1 → chờ Expo SDK 54
+- **EAS Build:** Đã fix nhiều lỗi build liên tiếp:
+  - `ajv@^8` + `.npmrc legacy-peer-deps`
+  - `google-services.json` bỏ khỏi .gitignore
+  - `assets/` tạo placeholder PNG
+  - `react-native` nâng từ 0.76.9 → 0.79.6
+  - `npx expo install --fix` đồng bộ tất cả package với SDK 53
+  - Xóa `expo-firebase-recaptcha` (deprecated, lỗi Gradle 8.13)
+  - Xóa `@maplibre/maplibre-react-native` (codegen lỗi với RN 0.79)
+- **Build đang tiếp tục** – chưa có APK thành công
 
 ### 📌 Ghi chú session 2026-05-16
 - **Đã hoàn thành session này:**
@@ -527,3 +545,4 @@ eas build --profile development --platform android
 36. **Client-first cho thẻ đào**: sessionCount + lastMiningDate đọc từ SecureStore local trước
 37. **points thẻ đào** chỉ cập nhật local sau khi Worker xác nhận thành công – KHÔNG tự cộng trước
 38. **OSRM gọi THẲNG từ app** – KHÔNG qua Cloudflare Worker trong bất kỳ trường hợp nào
+39. **MapView dùng WebView + Leaflet.js + OpenStreetMap** – KHÔNG dùng MapLibre (cần RN ≥ 0.80). Real-time update qua `mapRef.current?.updateDriverMarker(lat, lng)` → `injectJavaScript` vào Leaflet. Dẫn đường thật dùng deep link Google Maps app.

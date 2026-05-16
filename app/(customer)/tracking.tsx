@@ -11,7 +11,7 @@ import {
 } from 'react-native'
 import { useLocalSearchParams, router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import MapView from '../../src/components/MapView'
+import MapView, { type MapViewHandle } from '../../src/components/MapView'
 import { COLORS, TRIP } from '../../src/constants'
 import { createOfferConnection, closePeerConnection } from '../../src/services/webrtc'
 import type {
@@ -32,7 +32,8 @@ export default function TrackingScreen() {
   const [canCancel,   setCanCancel]   = useState(true)
   const [connected,  setConnected]  = useState(false)
   const startedAtRef = useRef<number>(Date.now())
-  const bridgeRef = useRef<any | null>(null)
+  const bridgeRef    = useRef<any | null>(null)
+  const mapRef       = useRef<MapViewHandle>(null)
 
   // Kiểm tra grace period 10 phút
   useEffect(() => {
@@ -82,6 +83,7 @@ export default function TrackingScreen() {
       const locMsg = msg as DCLocationMessage
       setDriverLat(locMsg.lat)
       setDriverLng(locMsg.lng)
+      mapRef.current?.updateDriverMarker(locMsg.lat, locMsg.lng)
     } else if (msg.type === 'status') {
       const statusMsg = msg as DCStatusMessage
       setTripStatus(statusMsg.status as typeof tripStatus)
@@ -129,6 +131,7 @@ export default function TrackingScreen() {
     <View style={styles.container}>
       <View style={styles.map}>
         <MapView
+          ref={mapRef}
           lat={driverLat}
           lng={driverLng}
           markers={[{ lat: driverLat, lng: driverLng, color: '#15803D', label: 'D' }]}

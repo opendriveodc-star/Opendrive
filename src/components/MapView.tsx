@@ -1,6 +1,10 @@
-import React from 'react'
+import React, { useRef, forwardRef, useImperativeHandle } from 'react'
 import { View, StyleSheet } from 'react-native'
 import { WebView } from 'react-native-webview'
+
+export interface MapViewHandle {
+  updateDriverMarker: (lat: number, lng: number) => void
+}
 
 interface Marker {
   lat:   number
@@ -15,12 +19,27 @@ interface MapViewProps {
   markers?: Marker[]
 }
 
-export default function MapView({ lat, lng, markers = [] }: MapViewProps) {
-  const markersJs = markers.map(m =>
-    `L.circleMarker([${m.lat}, ${m.lng}], {
+const MapView = forwardRef<MapViewHandle, MapViewProps>(({ lat, lng, markers = [] }, ref) => {
+  const webViewRef = useRef<WebView>(null)
+
+  useImperativeHandle(ref, () => ({
+    updateDriverMarker(newLat: number, newLng: number) {
+      webViewRef.current?.injectJavaScript(`
+        if (window.driverMarker) {
+          window.driverMarker.setLatLng([${newLat}, ${newLng}]);
+          map.panTo([${newLat}, ${newLng}]);
+        }
+        true;
+      `)
+    },
+  }))
+
+  const markersJs = markers.map((m, i) => `
+    var marker${i} = L.circleMarker([${m.lat}, ${m.lng}], {
       radius: 10, color: '${m.color}', fillColor: '${m.color}', fillOpacity: 1
-    }).addTo(map).bindPopup('${m.label}');`
-  ).join('\n')
+    }).addTo(map).bindPopup('${m.label}');
+    ${i === 0 ? 'window.driverMarker = marker0;' : ''}
+  `).join('\n')
 
   const html = `<!DOCTYPE html>
 <html>
@@ -45,14 +64,18 @@ export default function MapView({ lat, lng, markers = [] }: MapViewProps) {
   return (
     <View style={styles.container}>
       <WebView
+        ref={webViewRef}
         source={{ html }}
         style={styles.map}
         scrollEnabled={false}
         originWhitelist={['*']}
+        javaScriptEnabled
       />
     </View>
   )
-}
+})
+
+export default MapView
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
