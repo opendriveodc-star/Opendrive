@@ -7,7 +7,7 @@
 
 ## 0. TRẠNG THÁI HIỆN TẠI *(cập nhật mỗi khi kết thúc session)*
 
-**Cập nhật lần cuối:** 2026-05-16 (session 2)
+**Cập nhật lần cuối:** 2026-05-16 (session 3)
 
 ### ✅ Đã hoàn thành – Scaffold + Core Implementation + Bug Fixes + Hạ Tầng
 Toàn bộ 66 file skeleton đã được tạo tại `D:\OpenDrive\`. Đã implement các luồng core chính với Firebase, WebRTC, và Cloudflare Workers. Đã fix toàn bộ bugs, deploy hạ tầng hoàn chỉnh.
@@ -41,16 +41,22 @@ Toàn bộ 66 file skeleton đã được tạo tại `D:\OpenDrive\`. Đã impl
 | **Hạ tầng Cloudflare** | 8 workers deployed, tất cả secrets đã set | ✅ **Xong** |
 | **Hạ tầng Stellar** | 4 ví testnet, 1B ODC phát hành, secrets set vào Workers | ✅ **Xong** |
 | **TURN Server** | Cloudflare Realtime TURN activated, worker fix + deploy | ✅ **Xong** |
-| **MapView** | WebView + Leaflet.js + OpenStreetMap, real-time marker qua injectJavaScript | ✅ **Xong** |
+| **MapView** | WebView + Leaflet.js + **OpenFreeMap** tiles, real-time marker qua injectJavaScript | ✅ **Xong** |
 | **EAS Build setup** | Git, EAS CLI, projectId, assets, .npmrc, package versions đồng bộ SDK 53 | ✅ **Xong** |
+| **APK Build #1** | Build thành công – thiếu react-native-safe-area-context | ❌ Crash |
+| **APK Build #2** | Thêm safe-area-context + screens, fix TypeScript errors | 🔄 **Đang build** |
+| **Firebase Auth persistence** | initializeAuth + indexedDBLocalPersistence | ✅ **Xong** |
+| **expo-firebase-recaptcha** | Xóa, thay mock verifier – dùng được Firebase test phone numbers | ✅ **Xong** |
 
 ### 🔲 Việc cần làm tiếp theo (theo thứ tự)
 
-**Bước 4 – EAS Build lần đầu** *(đang thực hiện)*
+**Bước 4 – EAS Build** *(đang hoàn tất)*
 - [x] Tạo tài khoản Expo → `eas login` ✅
-- [x] `eas build:configure` → projectId đã set ✅
-- [ ] `eas build --profile development --platform android` → đang fix lỗi build
-- [ ] Cài APK lên emulator Android Studio (Pixel 6 API 33 Google Play)
+- [x] `eas build:configure` → projectId `be952562-1ee2-41c0-b74f-e9741042862b` ✅
+- [x] APK Build #1 thành công nhưng crash (thiếu safe-area-context) ✅
+- [x] APK Build #2 đang chạy – bao gồm safe-area-context + screens ✅
+- [ ] Cài APK #2 lên emulator → chọn Y khi hỏi "Install and run on emulator?"
+- [ ] Chạy `npx expo start --dev-client` → test app
 - [ ] iOS: chờ Apple Developer account kích hoạt → build iOS sau
 
 **Bước 5 – Implement từng Phase còn lại** *(theo mục 9 bên dưới)*
@@ -61,21 +67,38 @@ Toàn bộ 66 file skeleton đã được tạo tại `D:\OpenDrive\`. Đã impl
 - [x] Phase 5: Trong chuyến & Hoàn thành – recordTrip + rating ✅
 - [ ] Phase 6: Polish & Monetization (AdMob interstitial, UI polish)
 
-### 📌 Ghi chú session 2026-05-16 (session 2)
-- **MapView:** Đã thay MapLibre (không tương thích RN 0.79) bằng WebView + Leaflet.js + OpenStreetMap
-  - Hoàn toàn miễn phí, không cần API key
-  - Real-time tracking: `injectJavaScript` cập nhật marker khi nhận vị trí từ WebRTC DataChannel
-  - `MapViewHandle` ref expose `updateDriverMarker(lat, lng)`
-  - MapLibre yêu cầu RN ≥ 0.80 + React ≥ 19.1 → chờ Expo SDK 54
-- **EAS Build:** Đã fix nhiều lỗi build liên tiếp:
-  - `ajv@^8` + `.npmrc legacy-peer-deps`
-  - `google-services.json` bỏ khỏi .gitignore
-  - `assets/` tạo placeholder PNG
-  - `react-native` nâng từ 0.76.9 → 0.79.6
-  - `npx expo install --fix` đồng bộ tất cả package với SDK 53
-  - Xóa `expo-firebase-recaptcha` (deprecated, lỗi Gradle 8.13)
-  - Xóa `@maplibre/maplibre-react-native` (codegen lỗi với RN 0.79)
-- **Build đang tiếp tục** – chưa có APK thành công
+### 📌 Ghi chú session 2026-05-16 (session 3)
+
+**Packages đã thay đổi so với thiết kế ban đầu:**
+- `expo-firebase-recaptcha` → **XÓA** (deprecated, lỗi Gradle 8.13). Thay bằng mock verifier trong `app/(auth)/phone.tsx`. Chỉ dùng được Firebase test phone number (`+84900000000` / OTP `123456`). **Cần fix trước production.**
+- `@maplibre/maplibre-react-native` → **XÓA** (codegen lỗi RN 0.79, cần RN ≥ 0.80). Thay bằng WebView + Leaflet.js + OpenFreeMap. MapLibre thêm lại khi Expo SDK 54 ra.
+- `react-native` → nâng từ `0.76.9` lên `0.79.6` (yêu cầu Expo SDK 53)
+- `expo-router` → nâng từ `~4.0.20` lên `~5.1.11`
+- `expo-clipboard` → nâng từ `^5.0.0` lên `~7.1.5`
+- `expo-notifications` → nâng từ `^0.29.14` lên `~0.31.5`
+- Thêm: `react-native-safe-area-context`, `react-native-screens`, `ajv@^8`
+- Thêm: `.npmrc` với `legacy-peer-deps=true`
+
+**MapView – kiến trúc mới:**
+- `src/components/MapView.tsx`: WebView + Leaflet.js + OpenFreeMap tiles (free, không giới hạn)
+- Real-time tracking: `mapRef.current?.updateDriverMarker(lat, lng)` → `injectJavaScript` → Leaflet dịch marker + pan map
+- `MapViewHandle` ref: `{ updateDriverMarker(lat, lng): void }`
+- Dẫn đường thật: deep link Google Maps (không đổi)
+
+**Firebase Auth:**
+- `src/services/firebase.ts`: dùng `initializeAuth` + `indexedDBLocalPersistence` thay `getAuth`
+- Có try/catch xử lý hot reload re-initialization
+
+**EAS Build – các lỗi đã fix:**
+- `ajv@^8` + `.npmrc legacy-peer-deps` → fix module resolution
+- `google-services.json` bỏ khỏi `.gitignore` → fix prebuild
+- `assets/` tạo placeholder PNG → fix icon prebuild
+- `npx expo install --fix` → đồng bộ tất cả package SDK 53
+- Xóa deprecated packages → fix Gradle 8.13
+
+**Emulator:** Android Studio, Pixel 6, API 35, Google APIs (không có Google Play Store tab – dùng Google APIs là đủ cho FCM)
+
+**TypeScript:** PASS hoàn toàn (0 errors)
 
 ### 📌 Ghi chú session 2026-05-16
 - **Đã hoàn thành session này:**

@@ -2,8 +2,7 @@
 // Firebase Auth + Realtime Database (REST API only – không dùng SDK listener)
 
 import { initializeApp } from 'firebase/app'
-import { initializeAuth, getAuth, getReactNativePersistence } from 'firebase/auth'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import { initializeAuth, getAuth, indexedDBLocalPersistence, browserLocalPersistence } from 'firebase/auth'
 import { FIREBASE } from '../constants'
 
 const firebaseConfig = {
@@ -21,7 +20,7 @@ const app = initializeApp(firebaseConfig)
 let auth: ReturnType<typeof getAuth>
 try {
   auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
+    persistence: [indexedDBLocalPersistence, browserLocalPersistence],
   })
 } catch {
   auth = getAuth(app)

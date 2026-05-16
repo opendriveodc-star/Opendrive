@@ -20,9 +20,11 @@ import type { TripRealtimeInfo, TripQuote } from '../../src/types'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge:  false,
+    shouldShowAlert:  true,
+    shouldPlaySound:  true,
+    shouldSetBadge:   false,
+    shouldShowBanner: true,
+    shouldShowList:   true,
   }),
 })
 
