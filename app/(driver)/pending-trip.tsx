@@ -7,9 +7,9 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
 } from 'react-native'
+import { showAlert } from '../../src/components/GlobalAlert'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { recordTrip } from '../../src/services/cloudflare'
@@ -65,7 +65,7 @@ export default function PendingTripScreen() {
       await updateDriverStatus(driverInfo.uid, 'offline')
       router.replace('/(driver)/home')
     } catch (err) {
-      Alert.alert(t('common.error'), t('error.serverError'))
+      showAlert(t('common.error'), t('error.serverError'))
     } finally {
       setCompleting(false)
     }

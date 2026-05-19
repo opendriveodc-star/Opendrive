@@ -115,6 +115,65 @@ export async function geocodeAddress(address: string): Promise<{ lat: number; ln
   }
 }
 
+// Reverse geocode: tọa độ → tên địa chỉ ngắn (dùng Nominatim)
+export async function reverseGeocode(lat: number, lng: number): Promise<string> {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`
+  const res  = await fetch(url, {
+    headers: { Accept: 'application/json', 'User-Agent': 'OpenDrive/1.0' },
+  })
+  const data = await res.json()
+  if (data.error) return `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+
+  // Ghép địa chỉ ngắn: số nhà + đường + phường/quận
+  const a = data.address ?? {}
+  const parts = [
+    a.house_number,
+    a.road ?? a.pedestrian ?? a.footway ?? a.path,
+    a.suburb ?? a.neighbourhood ?? a.quarter,
+    a.city_district ?? a.county,
+  ].filter(Boolean)
+
+  if (parts.length > 0) return parts.slice(0, 3).join(', ')
+  // Fallback: lấy 2 phần đầu của display_name
+  return (data.display_name ?? '').split(',').slice(0, 2).join(',').trim()
+    || `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+}
+
+// Gợi ý địa chỉ theo từ khóa – dùng cho autocomplete (Nominatim)
+// nearLat/nearLng: vị trí hiện tại → thêm viewbox ~17km để ưu tiên kết quả gần
+export async function searchAddresses(
+  query: string,
+  limit = 4,
+  nearLat?: number,
+  nearLng?: number,
+): Promise<{ lat: number; lng: number; name: string }[]> {
+  if (query.length < 3) return []
+  try {
+    const encoded = encodeURIComponent(query)
+    const delta   = 0.15  // ~17km mỗi phía
+    const viewbox = nearLat != null && nearLng != null
+      ? `&viewbox=${nearLng - delta},${nearLat - delta},${nearLng + delta},${nearLat + delta}`
+      : ''
+    const url = `https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=${limit}&addressdetails=0&countrycodes=vn${viewbox}`
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5000)
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json', 'User-Agent': 'OpenDrive/1.0' },
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    const data = await res.json()
+    if (!Array.isArray(data)) return []
+    return data.map((r: any) => ({
+      lat:  Number(r.lat),
+      lng:  Number(r.lon),
+      name: (r.display_name as string).split(',').slice(0, 3).join(',').trim(),
+    }))
+  } catch {
+    return []
+  }
+}
+
 // Deep link Google Maps để dẫn đường (không cần SDK)
 export function openGoogleMapsNavigation(destLat: number, destLng: number): string {
   return `google.navigation:q=${destLat},${destLng}`

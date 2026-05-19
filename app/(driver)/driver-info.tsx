@@ -1,0 +1,354 @@
+// app/(driver)/driver-info.tsx
+
+import { useEffect, useState } from 'react'
+import {
+  View, Text, TextInput, TouchableOpacity, ScrollView,
+  StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Image, ActivityIndicator,
+} from 'react-native'
+import { showAlert, showActionSheet } from '../../src/components/GlobalAlert'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { Ionicons } from '@expo/vector-icons'
+import * as SecureStore from 'expo-secure-store'
+// Lazy – requires dev client rebuild with expo-image-picker + expo-image-manipulator
+let ImagePicker: typeof import('expo-image-picker') | null = null
+let ImageManipulator: typeof import('expo-image-manipulator') | null = null
+try { ImagePicker = require('expo-image-picker') } catch { ImagePicker = null }
+try { ImageManipulator = require('expo-image-manipulator') } catch { ImageManipulator = null }
+import { router } from 'expo-router'
+import { useTranslation } from 'react-i18next'
+import { getDriverInfo } from '../../src/utils/storage'
+import { updateDriverVehicleInfo } from '../../src/services/firestore'
+import { uploadDriverAvatar } from '../../src/services/firebase'
+import { TRANSPORT_MODELS } from '../../src/data/vehicles'
+import { SecureStoreKey, type DriverInfo, type VehicleType, type TransportModel } from '../../src/types'
+
+const BRAND       = '#1A2E5E'
+const BRAND_LIGHT = '#E8EDF6'
+const BRAND_MUTED = '#F0F4FB'
+
+export default function DriverInfoScreen() {
+  const { t } = useTranslation()
+  const [driverInfo,     setDriverInfo]     = useState<DriverInfo | null>(null)
+  const [name,           setName]           = useState('')
+  const [vehicleBrand,   setVehicleBrand]   = useState('')
+  const [vehicleColor,   setVehicleColor]   = useState('')
+  const [licensePlate,   setLicensePlate]   = useState('')
+  const [transportModel, setTransportModel] = useState<TransportModel>('passenger')
+  const [vehicleType,    setVehicleType]    = useState<VehicleType>('motorbike')
+  const [avatarUri,      setAvatarUri]      = useState<string | null>(null)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    getDriverInfo().then((info) => {
+      if (!info) return
+      setDriverInfo(info)
+      setName(info.name)
+      setVehicleBrand(info.vehicleBrand)
+      setVehicleColor(info.vehicleColor ?? '')
+      setLicensePlate(info.licensePlate)
+      setTransportModel(info.transportModel ?? 'passenger')
+      setVehicleType(info.vehicleType)
+      if (info.avatarUrl) setAvatarUri(info.avatarUrl)
+    })
+  }, [])
+
+  function handleModelChange(model: TransportModel) {
+    setTransportModel(model)
+    const cfg = TRANSPORT_MODELS.find((m) => m.key === model)!
+    if (!cfg.vehicles.find((v) => v.key === vehicleType)) {
+      setVehicleType(cfg.vehicles[0].key)
+    }
+  }
+
+  const vehicleOptions = TRANSPORT_MODELS.find((m) => m.key === transportModel)?.vehicles ?? []
+
+  async function pickAvatar() {
+    if (!ImagePicker) {
+      showAlert(t('common.error'), 'Cần build lại app để dùng tính năng này')
+      return
+    }
+    showActionSheet(t('driverInfo.avatar'), [
+      { text: 'Chụp ảnh',         icon: 'camera-outline',        onPress: () => launchPicker('camera') },
+      { text: 'Chọn từ thư viện', icon: 'image-outline',         onPress: () => launchPicker('library') },
+      { text: t('common.cancel'), style: 'cancel' },
+    ])
+  }
+
+  async function launchPicker(source: 'camera' | 'library') {
+    if (!ImagePicker) return
+    if (source === 'camera') {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync()
+      if (status !== 'granted') {
+        showAlert(t('common.error'), 'Cần cấp quyền truy cập camera')
+        return
+      }
+    } else {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+      if (status !== 'granted') {
+        showAlert(t('common.error'), 'Cần cấp quyền truy cập thư viện ảnh')
+        return
+      }
+    }
+    const result = source === 'camera'
+      ? await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [1, 1], quality: 1 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 1 })
+
+    if (!result.canceled && result.assets[0]) {
+      let uri = result.assets[0].uri
+      if (ImageManipulator) {
+        const m = await ImageManipulator.manipulateAsync(
+          uri,
+          [{ resize: { width: 150 } }],
+          { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
+        )
+        uri = m.uri
+      }
+      setAvatarUri(uri)
+    }
+  }
+
+  async function handleSave() {
+    if (!driverInfo) return
+    if (!name.trim() || !vehicleBrand.trim() || !licensePlate.trim()) {
+      showAlert(t('common.error'), 'Vui lòng điền đầy đủ thông tin')
+      return
+    }
+    setSaving(true)
+    try {
+      let newAvatarUrl = driverInfo.avatarUrl
+      if (avatarUri && avatarUri !== driverInfo.avatarUrl) {
+        setUploadingAvatar(true)
+        newAvatarUrl = await uploadDriverAvatar(driverInfo.uid, avatarUri)
+        setUploadingAvatar(false)
+      }
+      const fields = {
+        name:          name.trim().toUpperCase(),
+        vehicleType,
+        transportModel,
+        vehicleBrand:  vehicleBrand.trim().toUpperCase(),
+        vehicleColor:  vehicleColor.trim().replace(/\b\w/g, c => c.toUpperCase()),
+        licensePlate:  licensePlate.trim().toUpperCase(),
+        avatarUrl:     newAvatarUrl,
+      }
+      await updateDriverVehicleInfo(driverInfo.uid, fields)
+      const updated: DriverInfo = { ...driverInfo, ...fields }
+      await SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(updated))
+      setDriverInfo(updated)
+      showAlert(t('common.success'), t('driverInfo.saved'))
+    } catch (e) {
+      showAlert(t('common.error'), (e as Error).message)
+    } finally {
+      setSaving(false)
+      setUploadingAvatar(false)
+    }
+  }
+
+  return (
+    <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}>
+
+        {/* Back */}
+        <TouchableOpacity style={s.back} onPress={() => router.back()} activeOpacity={0.7}>
+          <Ionicons name="chevron-back" size={24} color={BRAND} />
+        </TouchableOpacity>
+
+        <Text style={s.heading}>{t('driverInfo.title')}</Text>
+
+        {/* ── Avatar ── */}
+        <TouchableOpacity style={s.avatarWrap} onPress={pickAvatar} activeOpacity={0.8}>
+          {avatarUri ? (
+            <Image source={{ uri: avatarUri }} style={s.avatarImg} />
+          ) : (
+            <View style={s.avatarPlaceholder}>
+              <Text style={s.avatarInitial}>{name ? name[0].toUpperCase() : '?'}</Text>
+            </View>
+          )}
+          {uploadingAvatar && (
+            <View style={s.avatarLoading}>
+              <ActivityIndicator size="small" color="#fff" />
+            </View>
+          )}
+          <View style={s.avatarEdit}>
+            <Ionicons name="camera-outline" size={12} color="#fff" />
+          </View>
+        </TouchableOpacity>
+        <Text style={s.avatarHint}>{t('driverInfo.changeAvatar')}</Text>
+
+        {/* ── Số điện thoại (read-only) ── */}
+        <View style={s.sectionHeader}>
+          <View style={s.sectionAccent} />
+          <Text style={s.sectionTitle}>{t('auth.enterPhone') ?? 'Số điện thoại'}</Text>
+        </View>
+        <View style={[s.inputWrap, s.readonlyWrap]}>
+          <Ionicons name="call-outline" size={18} color={BRAND} style={s.inputIcon} />
+          <Text style={s.readonlyText}>{driverInfo?.phone ?? '—'}</Text>
+          <View style={s.readonlyBadge}>
+            <Ionicons name="lock-closed-outline" size={12} color="#94A3B8" />
+          </View>
+        </View>
+
+        {/* ── Thông tin tài xế ── */}
+        <View style={s.sectionHeader}>
+          <View style={s.sectionAccent} />
+          <Text style={s.sectionTitle}>{t('register.sectionDriverInfo')}</Text>
+        </View>
+
+        <View style={s.inputWrap}>
+          <Ionicons name="person-outline" size={18} color={BRAND} style={s.inputIcon} />
+          <TextInput
+            style={[s.input, { textTransform: 'uppercase' }]}
+            placeholder={t('register.namePlaceholder')}
+            placeholderTextColor="#94A3B8"
+            value={name}
+            onChangeText={setName}
+            autoCapitalize="characters"
+          />
+        </View>
+
+        {/* ── Mô hình vận chuyển ── */}
+        <View style={s.sectionHeader}>
+          <View style={s.sectionAccent} />
+          <Text style={s.sectionTitle}>{t('register.transportModel')}</Text>
+        </View>
+
+        <View style={s.modelRow}>
+          {TRANSPORT_MODELS.map((m) => {
+            const active = transportModel === m.key
+            return (
+              <TouchableOpacity
+                key={m.key}
+                style={[s.modelBtn, active && s.modelBtnActive]}
+                onPress={() => handleModelChange(m.key)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name={m.icon as any} size={20} color={active ? '#fff' : BRAND} />
+                <Text style={[s.modelBtnText, active && s.modelBtnTextActive]}>{t(m.labelKey)}</Text>
+              </TouchableOpacity>
+            )
+          })}
+        </View>
+
+        {/* ── Thông tin xe ── */}
+        <View style={s.sectionHeader}>
+          <View style={s.sectionAccent} />
+          <Text style={s.sectionTitle}>{t('register.sectionVehicleInfo')}</Text>
+        </View>
+
+        <ScrollView
+          horizontal showsHorizontalScrollIndicator={false}
+          style={s.vehicleScroll} contentContainerStyle={s.vehicleScrollContent}
+        >
+          {vehicleOptions.map(({ key, icon, labelKey, specKey }) => {
+            const active = vehicleType === key
+            return (
+              <TouchableOpacity
+                key={key}
+                style={[s.vehicleBtn, active && s.vehicleBtnActive]}
+                onPress={() => setVehicleType(key)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name={icon as any} size={28} color={active ? '#fff' : BRAND} />
+                <Text style={[s.vehicleBtnText, active && s.vehicleBtnTextActive]}>{t(labelKey)}</Text>
+                <Text style={[s.vehicleBtnSpec, active && s.vehicleBtnSpecActive]}>{t(specKey)}</Text>
+              </TouchableOpacity>
+            )
+          })}
+        </ScrollView>
+
+        <Text style={s.scrollHint}>← Trượt qua lại để xem tiếp →</Text>
+
+        <View style={s.inputWrap}>
+          <Ionicons name="car-outline" size={18} color={BRAND} style={s.inputIcon} />
+          <TextInput
+            style={[s.input, { textTransform: 'uppercase' }]}
+            placeholder={t('register.brandPlaceholder')}
+            placeholderTextColor="#94A3B8"
+            value={vehicleBrand}
+            onChangeText={setVehicleBrand}
+            autoCapitalize="characters"
+          />
+        </View>
+
+        <View style={s.inputWrap}>
+          <Ionicons name="color-palette-outline" size={18} color={BRAND} style={s.inputIcon} />
+          <TextInput
+            style={s.input}
+            placeholder={t('register.colorPlaceholder')}
+            placeholderTextColor="#94A3B8"
+            value={vehicleColor}
+            onChangeText={v => setVehicleColor(v.replace(/(?:^|\s)\S/g, c => c.toUpperCase()))}
+            autoCapitalize="words"
+          />
+        </View>
+
+        <View style={s.inputWrap}>
+          <Ionicons name="card-outline" size={18} color={BRAND} style={s.inputIcon} />
+          <TextInput
+            style={[s.input, { textTransform: 'uppercase' }]}
+            placeholder={t('register.platePlaceholder')}
+            placeholderTextColor="#94A3B8"
+            value={licensePlate}
+            onChangeText={setLicensePlate}
+            autoCapitalize="characters"
+          />
+        </View>
+
+        <TouchableOpacity style={[s.btn, saving && { opacity: 0.7 }]} onPress={handleSave}
+          disabled={saving} activeOpacity={0.85}>
+          <Ionicons name="checkmark-circle-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
+          <Text style={s.btnText}>{saving ? t('common.loading') : t('driverInfo.save')}</Text>
+        </TouchableOpacity>
+
+      </ScrollView>
+    </KeyboardAvoidingView>
+  )
+}
+
+const s = StyleSheet.create({
+  root:   { flex: 1, backgroundColor: '#fff' },
+  scroll: { alignItems: 'center', paddingHorizontal: 28, paddingTop: 80, paddingBottom: 48 },
+  back:   { position: 'absolute', top: 40, left: 8, padding: 8 },
+  heading: { fontSize: 18, fontWeight: '700', color: BRAND, textAlign: 'center', marginBottom: 22, letterSpacing: 0.1, alignSelf: 'center' },
+
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 8, marginBottom: 12, marginTop: 6 },
+  sectionAccent: { width: 3, height: 16, borderRadius: 2, backgroundColor: BRAND },
+  sectionTitle:  { fontSize: 13, fontWeight: '700', color: BRAND, letterSpacing: 0.4, textTransform: 'uppercase' as const, opacity: 0.85 },
+
+  inputWrap:   { flexDirection: 'row', alignItems: 'center', width: '100%', height: 52, borderWidth: 1.5, borderColor: BRAND_LIGHT, borderRadius: 14, backgroundColor: BRAND_MUTED, marginBottom: 14, paddingRight: 16 },
+  readonlyWrap: { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' },
+  inputIcon:   { marginHorizontal: 14 },
+  input:       { flex: 1, fontSize: 15, color: BRAND },
+  readonlyText: { flex: 1, fontSize: 15, color: '#94A3B8' },
+  readonlyBadge: { padding: 4 },
+
+  modelRow:      { flexDirection: 'row', width: '100%', gap: 10, marginBottom: 14 },
+  modelBtn:      { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 13, borderRadius: 14, borderWidth: 1.5, borderColor: BRAND_LIGHT, backgroundColor: BRAND_MUTED },
+  modelBtnActive: { backgroundColor: BRAND, borderColor: BRAND },
+  modelBtnText:   { fontSize: 14, fontWeight: '600', color: BRAND },
+  modelBtnTextActive: { color: '#fff' },
+
+  vehicleScroll:        { width: '100%', marginBottom: 18 },
+  vehicleScrollContent: { gap: 10, paddingVertical: 4 },
+  vehicleBtn:      { flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5, minWidth: 110, paddingHorizontal: 18, paddingVertical: 16, borderRadius: 16, borderWidth: 1.5, borderColor: BRAND_LIGHT, backgroundColor: BRAND_MUTED },
+  vehicleBtnActive: { backgroundColor: BRAND, borderColor: BRAND },
+  vehicleBtnText:   { fontSize: 14, fontWeight: '700', color: BRAND, textAlign: 'center' },
+  vehicleBtnTextActive: { color: '#fff' },
+  vehicleBtnSpec:   { fontSize: 11, color: BRAND, opacity: 0.55, textAlign: 'center' },
+  vehicleBtnSpecActive: { color: '#fff', opacity: 0.8 },
+
+  scrollHint: { fontSize: 11, color: '#94A3B8', alignSelf: 'center', marginTop: -10, marginBottom: 10 },
+
+  btn:     { flexDirection: 'row', width: '100%', height: 52, backgroundColor: BRAND, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginTop: 8 },
+  btnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.3 },
+
+  avatarWrap:        { alignSelf: 'center', marginBottom: 6, marginTop: 4 },
+  avatarImg:         { width: 80, height: 80, borderRadius: 40, borderWidth: 2, borderColor: BRAND_LIGHT },
+  avatarPlaceholder: { width: 80, height: 80, borderRadius: 40, backgroundColor: BRAND, alignItems: 'center', justifyContent: 'center' },
+  avatarInitial:     { fontSize: 30, fontWeight: '700', color: '#fff' },
+  avatarLoading:     { position: 'absolute', width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  avatarEdit:        { position: 'absolute', bottom: 0, right: 0, width: 24, height: 24, borderRadius: 12, backgroundColor: BRAND, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
+  avatarHint:        { fontSize: 12, color: '#94A3B8', marginBottom: 18 },
+})

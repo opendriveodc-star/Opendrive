@@ -7,10 +7,10 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   Linking,
   ActivityIndicator,
 } from 'react-native'
+import { showAlert } from '../../src/components/GlobalAlert'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import * as Location from 'expo-location'
@@ -65,7 +65,7 @@ export default function TripScreen() {
         )
         bridgeRef.current = bridge
       } catch {
-        if (mounted) Alert.alert(t('common.error'), t('error.serverError'))
+        if (mounted) showAlert(t('common.error'), t('error.serverError'))
       }
     }
 
@@ -136,11 +136,11 @@ export default function TripScreen() {
   function handleOpenMaps() {
     if (!pendingTrip) return
     const url = `https://www.google.com/maps/search/?api=1&query=${pendingTrip.pickupGeohash}`
-    Linking.openURL(url).catch(() => Alert.alert(t('common.error'), t('error.unknown')))
+    Linking.openURL(url).catch(() => showAlert(t('common.error'), t('error.unknown')))
   }
 
   function handleEndTrip() {
-    Alert.alert(
+    showAlert(
       t('trip.completed'),
       t('trip.waitForRating'),
       [
@@ -205,7 +205,7 @@ export default function TripScreen() {
     } catch {
       setSubmitting(false)
       setWaitingForRating(false)
-      Alert.alert(t('common.error'), t('error.serverError'))
+      showAlert(t('common.error'), t('error.serverError'))
     }
   }
 

@@ -10,25 +10,22 @@ interface UseODCBalanceResult {
   refresh: () => void
 }
 
-export function useODCBalance(
-  stellarWallet:  string,
-  issuerAddress:  string,
-): UseODCBalanceResult {
+export function useODCBalance(stellarWallet: string): UseODCBalanceResult {
   const [balance, setBalance] = useState<number>(0)
   const [loading, setLoading] = useState<boolean>(false)
 
   const fetchBalance = useCallback(async () => {
-    if (!stellarWallet || !issuerAddress) return
+    if (!stellarWallet) return
     setLoading(true)
     try {
-      const bal = await getODCBalance(stellarWallet, issuerAddress)
+      const bal = await getODCBalance(stellarWallet)
       setBalance(bal)
     } catch {
       // giữ nguyên balance cũ nếu lỗi
     } finally {
       setLoading(false)
     }
-  }, [stellarWallet, issuerAddress])
+  }, [stellarWallet])
 
   useEffect(() => {
     fetchBalance()

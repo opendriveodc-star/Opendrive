@@ -2,18 +2,34 @@
 // Màn hình xác thực SĐT qua OTP
 
 import { useState, useRef } from 'react'
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native'
+import {
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  Image, StatusBar, KeyboardAvoidingView, Platform, ScrollView,
+} from 'react-native'
+import { showAlert } from '../../src/components/GlobalAlert'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
+import { Ionicons } from '@expo/vector-icons'
 import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth'
-import type { UserRole } from '../../src/types'
+import * as SecureStore from 'expo-secure-store'
+import type { UserRole, DriverInfo, CustomerInfo } from '../../src/types'
+import { SecureStoreKey } from '../../src/types'
 import { auth } from '../../src/services/firebase'
+import { getDriver, getMiner } from '../../src/services/firestore'
 
-// Mock reCAPTCHA verifier – hoạt động với Firebase test phone numbers
-// Production: thay bằng @react-native-firebase/auth khi cần real OTP
+const BRAND       = '#1A2E5E'
+const BRAND_LIGHT = '#E8EDF6'
+const BRAND_MUTED = '#F0F4FB'
+
+// Bật chế độ test – bypass reCAPTCHA server-side validation
+// Cho phép dùng test phone numbers đã cấu hình trong Firebase Console
+// Production: xóa dòng này và dùng @react-native-firebase/auth
+auth.settings.appVerificationDisabledForTesting = true
+
 const mockRecaptchaVerifier = {
   type: 'recaptcha' as const,
   verify: () => Promise.resolve('test-token'),
+  _reset: () => {},
 }
 
 export default function PhoneAuthScreen() {
@@ -50,6 +66,7 @@ export default function PhoneAuthScreen() {
 
   function isValidVietnameseMobile(normalized: string): boolean {
     if (!normalized.startsWith('+84') || normalized.length !== 12) return false
+    if (__DEV__) return true // dev: bỏ qua kiểm tra prefix để dùng số test Firebase
     const prefix2 = normalized.slice(3, 5) // 2 chữ số sau +84
     return VN_MOBILE_PREFIXES.includes(prefix2)
   }
@@ -57,7 +74,7 @@ export default function PhoneAuthScreen() {
   async function sendOTP() {
     const normalized = normalizePhone(phone)
     if (!isValidVietnameseMobile(normalized)) {
-      Alert.alert(t('error.invalidPhone'))
+      showAlert(t('error.invalidPhone'))
       return
     }
 
@@ -68,83 +85,297 @@ export default function PhoneAuthScreen() {
       setVerificationId(id)
       setStep('otp')
     } catch (e: unknown) {
-      Alert.alert(t('common.error'), (e as Error).message)
+      showAlert(t('common.error'), (e as Error).message)
     } finally {
       setLoading(false)
     }
   }
 
-  async function verifyOTP() {
-    if (otp.length !== 6 || !verificationId) {
-      Alert.alert(t('error.invalidOTP'))
+  async function verifyOTPWithValue(value: string) {
+    if (value.length !== 6 || !verificationId) return
+    setLoading(true)
+    try {
+      const credential = PhoneAuthProvider.credential(verificationId, value)
+      const result = await signInWithCredential(auth, credential)
+      await handleAuthResult(result.user.uid)
+    } catch (e: unknown) {
+      showAlert(t('error.invalidOTP'), (e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleAuthResult(uid: string) {
+    if (role === 'driver') {
+      const doc = await getDriver(uid)
+      if (doc) {
+        const info: DriverInfo = {
+          uid:            doc.uid,
+          phone:          doc.phone,
+          name:           doc.name,
+          vehicleType:    doc.vehicleType,
+          transportModel: doc.transportModel ?? 'passenger',
+          vehicleBrand:   doc.vehicleBrand,
+          vehicleColor:   doc.vehicleColor ?? '',
+          licensePlate:   doc.licensePlate,
+          avatarUrl:      doc.avatarUrl,
+          stellarWallet:  doc.stellarWallet,
+          status:         'offline',
+          rating:         doc.rating,
+          ratingCount:    doc.ratingCount,
+          firstTripDone:  doc.firstTripDone,
+          referralCount:  doc.referralCount,
+          termsVersion:   doc.termsVersion,
+        }
+        await SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(info))
+        await SecureStore.setItemAsync(SecureStoreKey.DRIVER_ENCRYPTED_KEY, doc.encryptedPrivateKey)
+        router.replace('/(driver)/home')
+      } else {
+        router.replace('/(auth)/register')
+      }
       return
     }
+    if (role === 'customer') {
+      const info: CustomerInfo = { uid, phone, cancelCount: 0 }
+      await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_INFO, JSON.stringify(info))
+      await SecureStore.setItemAsync(SecureStoreKey.USER_ROLE, 'customer')
+      router.replace('/(customer)/home')
+      return
+    }
+    if (role === 'miner') {
+      router.replace('/(mining)/home')
+    }
+  }
 
+  async function verifyOTP() {
+    if (otp.length !== 6 || !verificationId) return
     setLoading(true)
     try {
       const credential = PhoneAuthProvider.credential(verificationId, otp)
-      await signInWithCredential(auth, credential)
-      if (role === 'driver') router.replace('/(auth)/register')
-      if (role === 'customer') router.replace('/(customer)/home')
-      if (role === 'miner') router.replace('/(mining)/home')
+      const result = await signInWithCredential(auth, credential)
+      await handleAuthResult(result.user.uid)
     } catch (e: unknown) {
-      Alert.alert(t('error.invalidOTP'), (e as Error).message)
+      showAlert(t('error.invalidOTP'), (e as Error).message)
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>
-        {step === 'phone' ? t('auth.enterPhone') : t('auth.enterOTP')}
-      </Text>
+    <KeyboardAvoidingView
+      style={s.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-      {step === 'phone' ? (
-        <>
-          <TextInput
-            style={styles.input}
-            placeholder={t('auth.phonePlaceholder')}
-            keyboardType="phone-pad"
-            value={phone}
-            onChangeText={setPhone}
-            maxLength={11}
-          />
-          <TouchableOpacity style={styles.btn} onPress={sendOTP} disabled={loading}>
-            <Text style={styles.btnText}>{loading ? t('common.loading') : t('auth.sendOTP')}</Text>
-          </TouchableOpacity>
-        </>
-      ) : (
-        <>
-          <Text style={styles.hint}>{t('auth.otpSent', { phone })}</Text>
-          <TextInput
-            style={styles.input}
-            placeholder={t('auth.otpPlaceholder')}
-            keyboardType="number-pad"
-            value={otp}
-            onChangeText={setOtp}
-            maxLength={6}
-          />
-          <TouchableOpacity style={styles.btn} onPress={verifyOTP} disabled={loading}>
-            <Text style={styles.btnText}>{loading ? t('auth.verifying') : t('common.confirm')}</Text>
-          </TouchableOpacity>
-        </>
-      )}
-    </View>
+      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
+
+        {/* Back */}
+        <TouchableOpacity style={s.back} onPress={() => router.replace('/role-select')} activeOpacity={0.7}>
+          <Ionicons name="chevron-back" size={24} color={BRAND} />
+        </TouchableOpacity>
+
+
+        {/* Logo */}
+        <Image
+          source={require('../../assets/logo_od.png')}
+          style={s.logo}
+          resizeMode="contain"
+        />
+
+        <Text style={s.slogan}>{t('roleSelect.slogan')}</Text>
+
+        <View style={s.divider} />
+
+        {/* Step heading */}
+        <Text style={s.heading}>
+          {step === 'phone' ? t('auth.enterPhone') : t('auth.enterOTP')}
+        </Text>
+
+        {step === 'phone' ? (
+          <>
+            <View style={s.inputWrap}>
+              <Text style={s.prefix}>+84</Text>
+              <View style={s.inputSep} />
+              <TextInput
+                style={s.input}
+                placeholder={t('auth.phonePlaceholder')}
+                placeholderTextColor="#94A3B8"
+                keyboardType="phone-pad"
+                value={phone}
+                onChangeText={setPhone}
+                maxLength={12}
+              />
+            </View>
+            <TouchableOpacity style={s.btn} onPress={sendOTP} disabled={loading} activeOpacity={0.85}>
+              <Text style={s.btnText}>{loading ? t('common.loading') : t('auth.sendOTP')}</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <Text style={s.hint}>{t('auth.otpSent', { phone })}</Text>
+            <TextInput
+              style={s.otpInput}
+              placeholder="• • • • • •"
+              placeholderTextColor="#94A3B8"
+              keyboardType="number-pad"
+              value={otp}
+              onChangeText={(text) => {
+                setOtp(text)
+                if (text.length === 6) verifyOTPWithValue(text)
+              }}
+              maxLength={6}
+              textAlign="center"
+              autoFocus
+            />
+            <TouchableOpacity
+              style={[s.btn, otp.length < 6 && s.btnDisabled]}
+              onPress={verifyOTP}
+              disabled={loading || otp.length < 6}
+              activeOpacity={0.85}
+            >
+              <Text style={s.btnText}>{loading ? t('auth.verifying') : t('common.confirm')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.resend} onPress={() => setStep('phone')} activeOpacity={0.7}>
+              <Text style={s.resendText}>{t('auth.changePhone')}</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+      </ScrollView>
+    </KeyboardAvoidingView>
   )
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 24, justifyContent: 'center', backgroundColor: '#F8FAFC' },
-  title:     { fontSize: 24, fontWeight: '700', color: '#0F172A', marginBottom: 32 },
-  hint:      { fontSize: 14, color: '#64748B', marginBottom: 16 },
-  input:     {
-    height: 52, borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 12,
-    paddingHorizontal: 16, fontSize: 16, backgroundColor: '#fff', marginBottom: 16,
+const s = StyleSheet.create({
+  root: {
+    flex:            1,
+    backgroundColor: '#FFFFFF',
   },
-  btn:       {
-    height: 56, backgroundColor: '#1A56DB', borderRadius: 16,
-    justifyContent: 'center', alignItems: 'center',
+  scroll: {
+    alignItems:        'center',
+    paddingHorizontal: 28,
+    paddingTop:        92,
+    paddingBottom:     40,
   },
-  btnText:   { color: '#fff', fontSize: 18, fontWeight: '600' },
+
+  back: {
+    position: 'absolute',
+    top:      52,
+    left:     20,
+    padding:  8,
+  },
+
+  logo: {
+    width:        160,
+    height:       160,
+    marginBottom: -28,
+  },
+  slogan: {
+    fontSize:      13,
+    fontStyle:     'italic',
+    color:         BRAND,
+    textAlign:     'center',
+    opacity:       0.6,
+    letterSpacing: 0.3,
+    marginBottom:  12,
+  },
+
+  divider: {
+    width:           '70%',
+    height:          1,
+    backgroundColor: '#E2E8F0',
+    marginVertical:  20,
+  },
+
+  heading: {
+    fontSize:      18,
+    fontWeight:    '700',
+    color:         BRAND,
+    textAlign:     'center',
+    marginBottom:  24,
+    letterSpacing: 0.1,
+  },
+
+  // Phone input row
+  inputWrap: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    width:           '100%',
+    height:          54,
+    borderWidth:     1.5,
+    borderColor:     BRAND_LIGHT,
+    borderRadius:    14,
+    backgroundColor: BRAND_MUTED,
+    marginBottom:    16,
+    paddingLeft:     16,
+  },
+  prefix: {
+    fontSize:   16,
+    fontWeight: '600',
+    color:      BRAND,
+  },
+  inputSep: {
+    width:           1,
+    height:          24,
+    backgroundColor: BRAND_LIGHT,
+    marginHorizontal: 12,
+  },
+  input: {
+    flex:     1,
+    fontSize: 16,
+    color:    BRAND,
+  },
+
+  // OTP input
+  otpInput: {
+    width:           '100%',
+    height:          54,
+    borderWidth:     1.5,
+    borderColor:     BRAND_LIGHT,
+    borderRadius:    14,
+    backgroundColor: BRAND_MUTED,
+    fontSize:        22,
+    fontWeight:      '700',
+    color:           BRAND,
+    letterSpacing:   8,
+    marginBottom:    16,
+    paddingHorizontal: 16,
+  },
+
+  hint: {
+    fontSize:     13,
+    color:        '#64748B',
+    textAlign:    'center',
+    marginBottom: 16,
+    lineHeight:   20,
+  },
+
+  btn: {
+    width:           '100%',
+    height:          52,
+    backgroundColor: BRAND,
+    borderRadius:    14,
+    justifyContent:  'center',
+    alignItems:      'center',
+  },
+  btnText: {
+    color:      '#FFFFFF',
+    fontSize:   16,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  btnDisabled: {
+    opacity: 0.4,
+  },
+
+  resend: {
+    marginTop: 16,
+  },
+  resendText: {
+    fontSize:  14,
+    color:     BRAND,
+    opacity:   0.7,
+    textAlign: 'center',
+  },
 })

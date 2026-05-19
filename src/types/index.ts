@@ -7,7 +7,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type DriverStatus = 'ready' | 'busy' | 'offline'
-export type VehicleType  = 'motorbike' | 'car4' | 'car7' | 'pickup'
+export type VehicleType    = 'motorbike' | 'car4' | 'car7' | 'pickup' | 'truck'
+export type TransportModel = 'passenger' | 'freight'
 export type TripStatus   = 'waiting' | 'matched' | 'ongoing' | 'done' | 'cancelled'
 export type RatingValue  = 1 | 2 | 3 | 4 | 5
 export type Language     = 'vi' | 'en'
@@ -41,8 +42,11 @@ export interface DriverDoc {
   phone:               string
   name:                string
   vehicleType:         VehicleType
+  transportModel:      TransportModel
   vehicleBrand:        string
+  vehicleColor:        string
   licensePlate:        string
+  avatarUrl?:          string
   stellarWallet:       string        // public key Stellar – bất biến
   encryptedPrivateKey: string        // blob AES-256-GCM – bất biến
   geohash:             string        // 6 ký tự, cập nhật khi bật ready
@@ -93,8 +97,11 @@ export interface DriverInfo {
   phone:           string
   name:            string
   vehicleType:     VehicleType
+  transportModel:  TransportModel
   vehicleBrand:    string
+  vehicleColor:    string
   licensePlate:    string
+  avatarUrl?:      string
   stellarWallet:   string
   status:          DriverStatus
   rating:          number
@@ -291,7 +298,9 @@ export interface TripQuote {
   driverUid:    string
   driverName:   string
   vehicleBrand: string
+  vehicleColor: string
   licensePlate: string
+  avatarUrl?:   string
   rating:       number
   ratingCount:  number
   quotedPrice:  number    // VNĐ

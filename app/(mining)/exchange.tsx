@@ -8,11 +8,11 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native'
+import { showAlert } from '../../src/components/GlobalAlert'
 import { useTranslation } from 'react-i18next'
 import * as SecureStore from 'expo-secure-store'
 import { getMinerInfo } from '../../src/utils/storage'
@@ -40,19 +40,19 @@ export default function ExchangeScreen() {
 
   function handleConfirm() {
     if (!validateWallet(walletAddr)) {
-      Alert.alert(t('common.error'), t('error.walletNotFound'))
+      showAlert(t('common.error'), t('error.walletNotFound'))
       return
     }
     if (points < ODC.MIN_EXCHANGE_POINTS) {
-      Alert.alert(t('common.error'), t('mining.exchangeMin'))
+      showAlert(t('common.error'), t('mining.exchangeMin'))
       return
     }
     if (!minerInfo || points > minerInfo.points) {
-      Alert.alert(t('common.error'), t('error.insufficientODC'))
+      showAlert(t('common.error'), t('error.insufficientODC'))
       return
     }
 
-    Alert.alert(
+    showAlert(
       t('common.confirm'),
       t('mining.exchangeConfirm', { points, odc: odcReceived.toFixed(2) }),
       [
@@ -77,12 +77,12 @@ export default function ExchangeScreen() {
               setPointsInput('')
               setWalletAddr('')
 
-              Alert.alert(
+              showAlert(
                 t('common.success'),
                 t('mining.exchangeSuccess', { odc: result.odcSent.toFixed(2), txHash: result.txHash.slice(0, 8) + '…' }),
               )
             } catch (err: unknown) {
-              Alert.alert(t('common.error'), (err as Error).message)
+              showAlert(t('common.error'), (err as Error).message)
             }
           },
         },

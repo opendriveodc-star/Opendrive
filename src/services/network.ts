@@ -4,6 +4,7 @@
 import NetInfo from '@react-native-community/netinfo'
 
 export async function isOnWifi(): Promise<boolean> {
+  if (__DEV__) return false
   const state = await NetInfo.fetch()
   return state.type === 'wifi'
 }

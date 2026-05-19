@@ -8,12 +8,12 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native'
+import { showAlert } from '../../src/components/GlobalAlert'
 import { useLocalSearchParams, router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { auth, rtdb } from '../../src/services/firebase'
@@ -43,8 +43,7 @@ export default function BiddingScreen() {
   }>()
 
   const { driverInfo } = useDriverInfo()
-  const issuerAddress  = process.env.EXPO_PUBLIC_STELLAR_ISSUER_ADDRESS ?? ''
-  const { balance }    = useODCBalance(driverInfo?.stellarWallet ?? '', issuerAddress)
+  const { balance }    = useODCBalance(driverInfo?.stellarWallet ?? '')
 
   const [price,     setPrice]     = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -52,11 +51,11 @@ export default function BiddingScreen() {
   async function handleSubmit() {
     const quotedPrice = parseInt(price, 10)
     if (!quotedPrice || quotedPrice <= 0) {
-      Alert.alert(t('common.error'), t('error.unknown'))
+      showAlert(t('common.error'), t('error.unknown'))
       return
     }
     if (!hasEnoughODC(quotedPrice, balance)) {
-      Alert.alert(t('common.error'), t('error.insufficientODC'))
+      showAlert(t('common.error'), t('error.insufficientODC'))
       return
     }
     if (!driverInfo || !auth.currentUser) return
@@ -67,7 +66,9 @@ export default function BiddingScreen() {
         driverUid:    driverInfo.uid,
         driverName:   driverInfo.name,
         vehicleBrand: driverInfo.vehicleBrand,
+        vehicleColor: driverInfo.vehicleColor ?? '',
         licensePlate: driverInfo.licensePlate,
+        avatarUrl:    driverInfo.avatarUrl,
         rating:       driverInfo.rating,
         ratingCount:  driverInfo.ratingCount,
         quotedPrice,
@@ -76,7 +77,7 @@ export default function BiddingScreen() {
       await rtdb.set(`trips/${tripId}/quotes/${driverInfo.uid}`, quote)
       router.back()
     } catch {
-      Alert.alert(t('common.error'), t('error.serverError'))
+      showAlert(t('common.error'), t('error.serverError'))
     } finally {
       setSubmitting(false)
     }

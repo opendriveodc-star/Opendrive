@@ -82,32 +82,63 @@ export const ICE_CONFIG: RTCConfiguration = {
   iceTransportPolicy: 'all',
 }
 
-// Colors – xem CLAUDE.md mục 15.4
+// Brand color – lấy từ logo Logo_OD.PNG (navy đậm)
+// Toàn app dùng chung 1 tone màu thay vì tách màu theo role
+const B = {
+  primary:       '#1A2E5E',   // navy chủ đạo (từ logo)
+  light:         '#E8EDF6',   // navy nhạt (background card)
+  muted:         '#F0F4FB',   // navy rất nhạt (page background)
+  surface:       '#FFFFFF',
+  textPrimary:   '#1A2E5E',
+  textSecondary: '#64748B',
+  danger:        '#DC2626',
+  badge:         '#F59E0B',
+} as const
+
 export const COLORS = {
+  // Canonical brand palette – dùng cho screen mới
+  brand: {
+    primary:       B.primary,
+    primaryLight:  B.light,
+    primaryMuted:  B.muted,
+    background:    B.muted,
+    surface:       B.surface,
+    textPrimary:   B.textPrimary,
+    textSecondary: B.textSecondary,
+    danger:        B.danger,
+    odcBadge:      B.badge,
+  },
+  // Driver – giữ key cũ để backward compat, đồng màu brand
   driver: {
-    primary:    '#15803D',
-    secondary:  '#2563EB',
-    background: '#F0FDF4',
-    surface:    '#FFFFFF',
-    textPrimary: '#14532D',
-    danger:     '#DC2626',
-    odcBadge:   '#F59E0B',
+    primary:      B.primary,
+    primaryLight: B.light,
+    primaryMuted: B.muted,
+    background:   B.muted,
+    surface:      B.surface,
+    textPrimary:  B.textPrimary,
+    danger:       B.danger,
+    odcBadge:     B.badge,
   },
+  // Customer – giữ key cũ, đồng màu brand
   customer: {
-    primary:    '#1A56DB',
-    secondary:  '#F97316',
-    background: '#F8FAFC',
-    surface:    '#FFFFFF',
-    textPrimary: '#0F172A',
-    textSecondary: '#64748B',
-    success:    '#16A34A',
-    danger:     '#DC2626',
-    odcBadge:   '#F59E0B',
+    primary:       B.primary,
+    primaryLight:  B.light,
+    primaryMuted:  B.muted,
+    background:    B.muted,
+    surface:       B.surface,
+    textPrimary:   B.textPrimary,
+    textSecondary: B.textSecondary,
+    danger:        B.danger,
+    odcBadge:      B.badge,
   },
+  // Mining – giữ key cũ, đồng màu brand
   mining: {
-    primary:    '#0891B2',
-    background: '#ECFEFF',
-    textPrimary: '#164E63',
-    pointsBadge: '#0891B2',
+    primary:      B.primary,
+    primaryLight: B.light,
+    primaryMuted: B.muted,
+    background:   B.muted,
+    surface:      B.surface,
+    textPrimary:  B.textPrimary,
+    pointsBadge:  B.primary,
   },
 } as const

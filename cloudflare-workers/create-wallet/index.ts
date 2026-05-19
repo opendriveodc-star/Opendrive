@@ -2,14 +2,15 @@
 // Worker 1: POST /api/create-wallet
 // Generate Stellar keypair, mã hóa private key, tạo ví có sponsored reserve bằng Fee-bump wallet, tặng 100 ODC
 
-import { Keypair, Asset, TransactionBuilder, Operation, Networks, Server } from '@stellar/stellar-sdk'
+import { Keypair, Asset, TransactionBuilder, Operation, Networks, Horizon } from '@stellar/stellar-sdk'
 
 interface WorkerEnv {
-  MASTER_ENCRYPTION_KEY:      string
-  STELLAR_ISSUER_PRIVATE_KEY: string
-  STELLAR_ISSUER_ADDRESS:     string
-  STELLAR_FEEBUMP_PRIVATE_KEY: string
-  STELLAR_NETWORK:            string
+  MASTER_ENCRYPTION_KEY:           string
+  STELLAR_ISSUER_PRIVATE_KEY:      string
+  STELLAR_ISSUER_ADDRESS:          string
+  STELLAR_DISTRIBUTOR_PRIVATE_KEY: string
+  STELLAR_FEEBUMP_PRIVATE_KEY:     string
+  STELLAR_NETWORK:                 string
 }
 
 const CORS_HEADERS = {
@@ -76,31 +77,30 @@ export default {
         ? 'https://horizon-testnet.stellar.org'
         : 'https://horizon.stellar.org'
 
-      const server         = new Server(horizonUrl)
-      const issuerKeypair  = Keypair.fromSecret(env.STELLAR_ISSUER_PRIVATE_KEY)
-      const sponsorKeypair = Keypair.fromSecret(env.STELLAR_FEEBUMP_PRIVATE_KEY)
-      const newKeypair     = Keypair.random()
-      const ODC_ASSET      = new Asset('ODC', env.STELLAR_ISSUER_ADDRESS)
+      const server              = new Horizon.Server(horizonUrl)
+      const issuerKeypair       = Keypair.fromSecret(env.STELLAR_ISSUER_PRIVATE_KEY)
+      const distributorKeypair  = Keypair.fromSecret(env.STELLAR_DISTRIBUTOR_PRIVATE_KEY)
+      const sponsorKeypair      = Keypair.fromSecret(env.STELLAR_FEEBUMP_PRIVATE_KEY)
+      const newKeypair          = Keypair.random()
+      const ODC_ASSET           = new Asset('ODC', env.STELLAR_ISSUER_ADDRESS)
 
-      // Lấy issuer account để ký giao dịch và sponsor trả reserve XLM
+      // Dùng issuer account làm fee source (trả phí giao dịch)
       const issuerAccount = await server.loadAccount(issuerKeypair.publicKey())
 
       const tx = new TransactionBuilder(issuerAccount, {
-        fee:              '100',
+        fee:               '100',
         networkPassphrase: networkPass,
       })
-        // Sponsored reserve: fee-bump/sponsor wallet bảo trợ cho ví tài xế mới
+        // Sponsored reserve: sponsor wallet bảo trợ reserve XLM cho ví tài xế mới
         .addOperation(Operation.beginSponsoringFutureReserves({
           sponsoredId: newKeypair.publicKey(),
           source:      sponsorKeypair.publicKey(),
         }))
-        // Tạo account mới dưới sponsor
         .addOperation(Operation.createAccount({
-          destination:      newKeypair.publicKey(),
-          startingBalance:  '0',
-          source:           sponsorKeypair.publicKey(),
+          destination:     newKeypair.publicKey(),
+          startingBalance: '0',
+          source:          sponsorKeypair.publicKey(),
         }))
-        // Thêm ODC trustline cho ví mới
         .addOperation(Operation.changeTrust({
           asset:  ODC_ASSET,
           source: newKeypair.publicKey(),
@@ -108,17 +108,18 @@ export default {
         .addOperation(Operation.endSponsoringFutureReserves({
           source: newKeypair.publicKey(),
         }))
-        // Tặng 100 ODC signup bonus
+        // Tặng 100 ODC signup bonus từ Ví Distributor (đúng thiết kế)
         .addOperation(Operation.payment({
           destination: newKeypair.publicKey(),
           asset:       ODC_ASSET,
           amount:      '100',
+          source:      distributorKeypair.publicKey(),
         }))
         .setTimeout(60)
         .build()
 
-      // Ký bởi Issuer, Sponsor và ví mới
-      tx.sign(issuerKeypair, sponsorKeypair, newKeypair)
+      // Ký bởi Issuer (fee), Sponsor, Distributor và ví mới
+      tx.sign(issuerKeypair, sponsorKeypair, distributorKeypair, newKeypair)
       await server.submitTransaction(tx)
 
       // Mã hóa private key

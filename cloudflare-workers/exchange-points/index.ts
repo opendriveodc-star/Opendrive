@@ -8,7 +8,7 @@ import {
   TransactionBuilder,
   Operation,
   Networks,
-  Server,
+  Horizon,
   Transaction,
 } from '@stellar/stellar-sdk'
 
@@ -132,7 +132,7 @@ export default {
       const isTestnet      = env.STELLAR_NETWORK !== 'mainnet'
       const networkPass    = isTestnet ? Networks.TESTNET : Networks.PUBLIC
       const horizonUrl     = isTestnet ? 'https://horizon-testnet.stellar.org' : 'https://horizon.stellar.org'
-      const server         = new Server(horizonUrl)
+      const server         = new Horizon.Server(horizonUrl)
       const distributorKp  = Keypair.fromSecret(env.STELLAR_DISTRIBUTOR_PRIVATE_KEY)
       const feeBumpKp      = Keypair.fromSecret(env.STELLAR_FEEBUMP_PRIVATE_KEY)
       const ODC_ASSET      = new Asset('ODC', env.STELLAR_ISSUER_ADDRESS)

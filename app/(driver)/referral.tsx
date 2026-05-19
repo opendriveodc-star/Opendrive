@@ -1,171 +1,145 @@
 // app/(driver)/referral.tsx
-// Màn hình giới thiệu tài xế
 
 import React, { useEffect, useState } from 'react'
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Share,
-  Alert,
+  View, Text, TouchableOpacity, StyleSheet,
+  Share, ScrollView, StatusBar,
 } from 'react-native'
+import { showAlert } from '../../src/components/GlobalAlert'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { Ionicons } from '@expo/vector-icons'
 import * as Clipboard from 'expo-clipboard'
+import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { getDriverInfo } from '../../src/utils/storage'
-import { COLORS, ODC } from '../../src/constants'
+import { ODC } from '../../src/constants'
 import type { DriverInfo } from '../../src/types'
+
+const BRAND       = '#1A2E5E'
+const BRAND_LIGHT = '#E8EDF6'
 
 export default function ReferralScreen() {
   const { t } = useTranslation()
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null)
 
-  useEffect(() => {
-    getDriverInfo().then(setDriverInfo)
-  }, [])
+  useEffect(() => { getDriverInfo().then(setDriverInfo) }, [])
 
-  const referralCode = driverInfo?.phone ?? driverInfo?.uid ?? ''
+  const referralCode = driverInfo?.uid ? driverInfo.uid.slice(0, 8).toUpperCase() : ''
 
   async function copyCode() {
     if (!referralCode) return
     await Clipboard.setStringAsync(referralCode)
-    Alert.alert(t('common.success'), t('settings.copied'))
+    showAlert(t('common.success'), t('settings.copied'))
   }
 
   async function shareCode() {
     if (!referralCode) return
     try {
       await Share.share({
-        message: `Dùng mã ${referralCode} để đăng ký OpenDrive và nhận ${ODC.SIGNUP_BONUS} ODC!`,
+        message: t('referral.shareMessage', {
+          code:  referralCode,
+          bonus: ODC.SIGNUP_BONUS,
+        }) ?? `Dùng mã ${referralCode} để đăng ký OpenDrive và nhận ${ODC.SIGNUP_BONUS} ODC!`,
       })
-    } catch {
-      // người dùng hủy share
-    }
+    } catch { /* user cancelled */ }
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>{t('settings.referral')}</Text>
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <StatusBar barStyle="dark-content" backgroundColor="#F7F9FD" />
 
-      <View style={styles.card}>
-        <Text style={styles.codeLabel}>{t('settings.referralCode', { code: '' })}</Text>
-        <Text style={styles.code}>{referralCode || '—'}</Text>
+      <View style={styles.topBar}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="chevron-back" size={22} color={BRAND} />
+        </TouchableOpacity>
+        <Text style={styles.topTitle}>{t('nav.referral')}</Text>
+        <View style={{ width: 36 }} />
+      </View>
 
-        <View style={styles.actions}>
-          <TouchableOpacity style={styles.button} onPress={copyCode}>
-            <Text style={styles.buttonText}>{t('settings.copyCode')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.button, styles.shareButton]} onPress={shareCode}>
-            <Text style={styles.buttonText}>{t('common.confirm')}</Text>
-          </TouchableOpacity>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+
+        {/* Mã giới thiệu */}
+        <View style={styles.codeCard}>
+          <View style={styles.codeIconWrap}>
+            <Ionicons name="gift-outline" size={28} color="#fff" />
+          </View>
+          <Text style={styles.codeHint}>{t('settings.referralCode', { code: '' }).replace(':', '').trim()}</Text>
+          <Text style={styles.codeText}>{referralCode || '——'}</Text>
+          <View style={styles.codeBtns}>
+            <TouchableOpacity style={styles.copyBtn} onPress={copyCode}>
+              <Ionicons name="copy-outline" size={16} color={BRAND} />
+              <Text style={styles.copyBtnText}>{t('settings.copyCode')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.shareBtn} onPress={shareCode}>
+              <Ionicons name="share-social-outline" size={16} color="#fff" />
+              <Text style={styles.shareBtnText}>{t('referral.share') ?? 'Chia sẻ'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
 
-      <View style={styles.statsCard}>
-        <Text style={styles.statsLabel}>{t('settings.referral')}</Text>
-        <Text style={styles.statsValue}>{driverInfo?.referralCount ?? 0}</Text>
-      </View>
+        {/* Thống kê */}
+        <View style={styles.statsCard}>
+          <View style={styles.statItem}>
+            <Text style={styles.statValue}>{driverInfo?.referralCount ?? 0}</Text>
+            <Text style={styles.statLabel}>{t('referral.totalReferred') ?? 'Tài xế đã giới thiệu'}</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <View style={styles.statItem}>
+            <Text style={styles.statValue}>{(driverInfo?.referralCount ?? 0) * ODC.REFERRAL_BONUS}</Text>
+            <Text style={styles.statLabel}>{t('referral.odcEarned') ?? 'ODC đã nhận'}</Text>
+          </View>
+        </View>
 
-      <View style={styles.infoCard}>
-        <Text style={styles.infoTitle}>📣 Thưởng giới thiệu</Text>
-        <Text style={styles.infoText}>
-          Giới thiệu 1 tài xế mới = +{ODC.REFERRAL_BONUS} ODC khi họ hoàn thành chuyến đầu tiên.
-        </Text>
-        <Text style={styles.infoText}>
-          Đăng ký mới = +{ODC.SIGNUP_BONUS} ODC cho người được giới thiệu.
-        </Text>
-      </View>
+        {/* Thông tin thưởng */}
+        <View style={styles.infoCard}>
+          <View style={styles.infoHeader}>
+            <Ionicons name="information-circle-outline" size={18} color={BRAND} />
+            <Text style={styles.infoTitle}>{t('referral.howItWorks') ?? 'Cách hoạt động'}</Text>
+          </View>
+          <InfoRow icon="checkmark-circle-outline"
+            text={t('referral.rule1') ?? `Giới thiệu 1 tài xế mới = +${ODC.REFERRAL_BONUS} ODC khi họ hoàn thành chuyến đầu`} />
+          <InfoRow icon="checkmark-circle-outline"
+            text={t('referral.rule2') ?? `Tài xế mới dùng mã của bạn sẽ nhận +${ODC.SIGNUP_BONUS} ODC khi đăng ký`} />
+        </View>
+
+      </ScrollView>
+    </SafeAreaView>
+  )
+}
+
+function InfoRow({ icon, text }: { icon: string; text: string }) {
+  return (
+    <View style={styles.infoRow}>
+      <Ionicons name={icon as any} size={16} color={BRAND} style={{ marginTop: 1 }} />
+      <Text style={styles.infoText}>{text}</Text>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex:            1,
-    backgroundColor: COLORS.driver.background,
-    padding:         16,
-  },
-  title: {
-    fontSize:     22,
-    fontWeight:   '700',
-    color:        COLORS.driver.textPrimary,
-    marginBottom: 20,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius:    12,
-    padding:         20,
-    elevation:       2,
-    marginBottom:    16,
-    alignItems:      'center',
-  },
-  codeLabel: {
-    fontSize:     13,
-    color:        '#64748B',
-    marginBottom: 8,
-  },
-  code: {
-    fontSize:      24,
-    fontWeight:    '800',
-    color:         COLORS.driver.textPrimary,
-    letterSpacing: 2,
-    marginBottom:  20,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap:           12,
-    width:         '100%',
-  },
-  button: {
-    flex:            1,
-    backgroundColor: COLORS.driver.primary,
-    padding:         12,
-    borderRadius:    8,
-    alignItems:      'center',
-  },
-  shareButton: {
-    backgroundColor: COLORS.driver.secondary,
-  },
-  buttonText: {
-    color:      '#FFFFFF',
-    fontWeight: '600',
-  },
-  statsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius:    12,
-    padding:         16,
-    elevation:       2,
-    marginBottom:    16,
-    flexDirection:   'row',
-    justifyContent:  'space-between',
-    alignItems:      'center',
-  },
-  statsLabel: {
-    fontSize: 14,
-    color:    '#64748B',
-  },
-  statsValue: {
-    fontSize:   24,
-    fontWeight: '800',
-    color:      COLORS.driver.primary,
-  },
-  infoCard: {
-    backgroundColor: '#F0FDF4',
-    borderRadius:    12,
-    padding:         16,
-    borderWidth:     1,
-    borderColor:     '#BBF7D0',
-  },
-  infoTitle: {
-    fontSize:     15,
-    fontWeight:   '700',
-    color:        COLORS.driver.textPrimary,
-    marginBottom: 8,
-  },
-  infoText: {
-    fontSize:     13,
-    color:        '#374151',
-    lineHeight:   20,
-    marginBottom: 4,
-  },
+  safe:      { flex: 1, backgroundColor: '#F7F9FD' },
+  topBar:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
+  backBtn:   { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: BRAND, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 2 },
+  topTitle:  { fontSize: 17, fontWeight: '700', color: BRAND },
+  content:   { padding: 16, paddingBottom: 48 },
+  codeCard:  { backgroundColor: BRAND, borderRadius: 18, padding: 24, alignItems: 'center', marginBottom: 16, shadowColor: BRAND, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 8 },
+  codeIconWrap: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  codeHint:  { fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 4 },
+  codeText:  { fontSize: 32, fontWeight: '800', color: '#fff', letterSpacing: 4, marginBottom: 20 },
+  codeBtns:  { flexDirection: 'row', gap: 10, width: '100%' },
+  copyBtn:   { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#fff', paddingVertical: 10, borderRadius: 10 },
+  copyBtnText: { fontSize: 14, fontWeight: '600', color: BRAND },
+  shareBtn:  { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.2)', paddingVertical: 10, borderRadius: 10 },
+  shareBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  statsCard: { backgroundColor: '#fff', borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'center', marginBottom: 16, elevation: 3, shadowColor: BRAND, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 6 },
+  statItem:  { flex: 1, alignItems: 'center' },
+  statValue: { fontSize: 28, fontWeight: '800', color: BRAND },
+  statLabel: { fontSize: 12, color: '#64748B', textAlign: 'center', marginTop: 2 },
+  statDivider: { width: 1, height: 40, backgroundColor: '#E2E8F0' },
+  infoCard:  { backgroundColor: '#fff', borderRadius: 14, padding: 16, elevation: 3, shadowColor: BRAND, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 6 },
+  infoHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+  infoTitle: { fontSize: 14, fontWeight: '700', color: BRAND },
+  infoRow:   { flexDirection: 'row', gap: 8, marginBottom: 8, alignItems: 'flex-start' },
+  infoText:  { flex: 1, fontSize: 13, color: '#475569', lineHeight: 20 },
 })

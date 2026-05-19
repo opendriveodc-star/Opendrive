@@ -2,8 +2,19 @@
 // Firebase Auth + Realtime Database (REST API only – không dùng SDK listener)
 
 import { initializeApp } from 'firebase/app'
-import { initializeAuth, getAuth, indexedDBLocalPersistence, browserLocalPersistence } from 'firebase/auth'
+import { initializeAuth, getAuth, signOut, type Persistence } from 'firebase/auth'
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage'
+
+// Metro resolves firebase/auth to the RN bundle at runtime which exports this.
+// The browser TypeScript types omit it, so we declare it manually.
+declare module 'firebase/auth' {
+  export function getReactNativePersistence(storage: object): Persistence
+}
+import { getReactNativePersistence } from 'firebase/auth'
+import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 import { FIREBASE } from '../constants'
+import { SecureStoreKey } from '../types'
 
 const firebaseConfig = {
   apiKey:            FIREBASE.apiKey,
@@ -20,12 +31,35 @@ const app = initializeApp(firebaseConfig)
 let auth: ReturnType<typeof getAuth>
 try {
   auth = initializeAuth(app, {
-    persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+    persistence: getReactNativePersistence(ReactNativeAsyncStorage),
   })
 } catch {
   auth = getAuth(app)
 }
 export { auth }
+
+const storage = getStorage(app)
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Đăng xuất: set offline Firestore nếu cần (gọi từ bên ngoài trước), rồi
+ * signOut Firebase và xóa USER_ROLE khỏi SecureStore.
+ * Giữ nguyên DRIVER_INFO + DRIVER_ENCRYPTED_KEY để đăng nhập lại nhanh.
+ */
+export async function signOutAndClearRole(): Promise<void> {
+  await signOut(auth)
+  await SecureStore.deleteItemAsync(SecureStoreKey.USER_ROLE)
+}
+
+// ─── Firebase Storage ─────────────────────────────────────────────────────────
+
+export async function uploadDriverAvatar(uid: string, imageUri: string): Promise<string> {
+  const blob = await (await fetch(imageUri)).blob()
+  const storageRef = ref(storage, `avatars/${uid}.jpg`)
+  await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' })
+  return getDownloadURL(storageRef)
+}
 
 // ─── Realtime Database via REST (không dùng SDK listener) ────────────────────
 

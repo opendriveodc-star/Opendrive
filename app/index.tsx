@@ -7,6 +7,7 @@ import { router } from 'expo-router'
 import * as SecureStore from 'expo-secure-store'
 import { SecureStoreKey, UserRole, DriverInfo } from '../src/types'
 import { APP } from '../src/constants'
+import Logo from '../src/components/Logo'
 
 export default function SplashScreen() {
   useEffect(() => {
@@ -28,20 +29,17 @@ export default function SplashScreen() {
 
         const info: DriverInfo = JSON.parse(raw)
 
-        // Kiểm tra termsVersion
         if (info.termsVersion !== APP.TERMS_VERSION) {
           router.replace('/(auth)/terms-update')
           return
         }
 
-        // Kiểm tra lock
         const lockUntil = await SecureStore.getItemAsync(SecureStoreKey.DRIVER_LOCK_UNTIL)
         if (lockUntil && parseInt(lockUntil) > Date.now()) {
           router.replace({ pathname: '/lock-screen', params: { lockedUntil: lockUntil, reason: 'fraud' } })
           return
         }
 
-        // Kiểm tra pending trip
         const pending = await SecureStore.getItemAsync(SecureStoreKey.PENDING_TRIP)
         if (pending && info.status === 'busy') {
           router.replace('/(driver)/pending-trip')
@@ -74,11 +72,21 @@ export default function SplashScreen() {
 
   return (
     <View style={styles.container}>
-      <ActivityIndicator size="large" color="#1A56DB" />
+      <Logo wheelSize={56} fontSize={42} />
+      <ActivityIndicator size="small" color="#94A3B8" style={styles.spinner} />
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
+  container: {
+    flex:            1,
+    justifyContent:  'center',
+    alignItems:      'center',
+    backgroundColor: '#fff',
+    gap:             0,
+  },
+  spinner: {
+    marginTop: 32,
+  },
 })

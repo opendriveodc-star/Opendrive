@@ -71,13 +71,13 @@ export function encodeMemo(
 }
 
 // Lấy số dư ODC từ Stellar Horizon
-export async function getODCBalance(stellarWallet: string, issuerAddress: string): Promise<number> {
+export async function getODCBalance(stellarWallet: string): Promise<number> {
   const res  = await fetch(`${STELLAR.HORIZON_URL}/accounts/${stellarWallet}`)
   if (!res.ok) return 0
   const data = await res.json()
   const balance = data.balances?.find(
     (b: { asset_code?: string; asset_issuer?: string; balance: string }) =>
-      b.asset_code === STELLAR.ODC_ASSET_CODE && b.asset_issuer === issuerAddress
+      b.asset_code === STELLAR.ODC_ASSET_CODE && b.asset_issuer === STELLAR.ISSUER_ADDRESS
   )
   return balance ? parseFloat(balance.balance) : 0
 }

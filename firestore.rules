@@ -34,8 +34,8 @@ service cloud.firestore {
       allow create: if isOwner(uid)
         && !exists(/databases/$(database)/documents/drivers/$(uid))
         && request.resource.data.keys().hasAll([
-            'uid', 'phone', 'name', 'vehicleType', 'vehicleBrand',
-            'licensePlate', 'geohash', 'status', 'rating',
+            'uid', 'phone', 'name', 'vehicleType', 'transportModel', 'vehicleBrand',
+            'vehicleColor', 'licensePlate', 'geohash', 'status', 'rating',
             'stellarWallet', 'encryptedPrivateKey', 'firstTripDone',
             'referralCount', 'termsAcceptedAt', 'termsVersion', 'updatedAt'
            ])
@@ -45,14 +45,17 @@ service cloud.firestore {
         && request.resource.data.status        == 'offline'
         && request.resource.data.firstTripDone == false
         && request.resource.data.referralCount == 0
-        && request.resource.data.vehicleType.matches('^(motorbike|car4|car7|pickup)$');
+        && request.resource.data.vehicleType.matches('^(motorbike|car4|car7|pickup|truck)$')
+        && request.resource.data.transportModel.matches('^(passenger|freight)$');
 
       // Sửa: chỉ chủ tài khoản, không được thay đổi các field được bảo vệ
       // stellarWallet + encryptedPrivateKey khóa vĩnh viễn – mỗi UID gắn với 1 ví mãi mãi
       allow update: if isOwner(uid)
         && protectedFieldsUnchanged()
         && request.resource.data.status.matches('^(ready|busy|offline)$')
-        && request.resource.data.vehicleType.matches('^(motorbike|car4|car7|pickup)$');
+        && request.resource.data.vehicleType.matches('^(motorbike|car4|car7|pickup|truck)$')
+        && (!request.resource.data.keys().hasAll(['transportModel'])
+            || request.resource.data.transportModel.matches('^(passenger|freight)$'));
 
       allow delete: if false;
     }

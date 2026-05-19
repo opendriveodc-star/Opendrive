@@ -2,7 +2,8 @@
 // Màn hình đào coin: xem quảng cáo, tích điểm, đổi điểm
 
 import { useState, useEffect, useRef } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
+import { showAlert } from '../../src/components/GlobalAlert'
 import * as SecureStore from 'expo-secure-store'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
@@ -64,7 +65,7 @@ export default function MiningHomeScreen() {
   async function watchAd() {
     if (!isMining) return
     if (roundsThisSession >= ODC.MAX_MINING_ROUNDS) {
-      Alert.alert(t('mining.maxRounds'))
+      showAlert(t('mining.maxRounds'))
       return
     }
     // TODO: AdMob rewarded ad
@@ -74,7 +75,7 @@ export default function MiningHomeScreen() {
   async function stopMining() {
     setIsMining(false)
     if (roundsThisSession < ODC.MIN_MINING_ROUNDS) {
-      Alert.alert(t('mining.minRounds'))
+      showAlert(t('mining.minRounds'))
       setRoundsThisSession(0)
       return
     }
@@ -96,7 +97,7 @@ export default function MiningHomeScreen() {
       await SecureStore.setItemAsync(SecureStoreKey.MINER_INFO,    JSON.stringify(updatedInfo))
       await SecureStore.setItemAsync(SecureStoreKey.MINER_SESSION, JSON.stringify(updatedSession))
     } catch {
-      Alert.alert(t('common.error'), t('error.serverError'))
+      showAlert(t('common.error'), t('error.serverError'))
     } finally {
       setRoundsThisSession(0)
     }
