@@ -6,6 +6,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Image, StatusBar, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
@@ -20,11 +21,6 @@ import { getDriver, getMiner } from '../../src/services/firestore'
 const BRAND       = '#1A2E5E'
 const BRAND_LIGHT = '#E8EDF6'
 const BRAND_MUTED = '#F0F4FB'
-
-// Bật chế độ test – bypass reCAPTCHA server-side validation
-// Cho phép dùng test phone numbers đã cấu hình trong Firebase Console
-// Production: xóa dòng này và dùng @react-native-firebase/auth
-auth.settings.appVerificationDisabledForTesting = true
 
 const mockRecaptchaVerifier = {
   type: 'recaptcha' as const,
@@ -76,6 +72,10 @@ export default function PhoneAuthScreen() {
     if (!isValidVietnameseMobile(normalized)) {
       showAlert(t('error.invalidPhone'))
       return
+    }
+
+    if (process.env.EXPO_PUBLIC_TEST_AUTH === 'true') {
+      auth.settings.appVerificationDisabledForTesting = true
     }
 
     setLoading(true)
@@ -162,19 +162,19 @@ export default function PhoneAuthScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={s.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <SafeAreaView style={s.root} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
-
-        {/* Back */}
-        <TouchableOpacity style={s.back} onPress={() => router.replace('/role-select')} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={BRAND} />
+      {/* Top bar */}
+      <View style={s.topBar}>
+        <TouchableOpacity style={s.backBtn} onPress={() => router.replace('/role-select')} activeOpacity={0.7}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="chevron-back" size={22} color={BRAND} />
         </TouchableOpacity>
+      </View>
 
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
 
         {/* Logo */}
         <Image
@@ -243,7 +243,8 @@ export default function PhoneAuthScreen() {
         )}
 
       </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   )
 }
 
@@ -255,15 +256,29 @@ const s = StyleSheet.create({
   scroll: {
     alignItems:        'center',
     paddingHorizontal: 28,
-    paddingTop:        92,
+    paddingTop:        24,
     paddingBottom:     40,
   },
 
-  back: {
-    position: 'absolute',
-    top:      52,
-    left:     20,
-    padding:  8,
+  topBar: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#fff',
+  },
+  backBtn: {
+    width:           36,
+    height:          36,
+    borderRadius:    18,
+    backgroundColor: '#fff',
+    alignItems:      'center',
+    justifyContent:  'center',
+    shadowColor:     '#1A2E5E',
+    shadowOffset:    { width: 0, height: 2 },
+    shadowOpacity:   0.08,
+    shadowRadius:    4,
+    elevation:       2,
   },
 
   logo: {

@@ -1,0 +1,15 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "drivers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "vehicleType", "order": "ASCENDING" },
+        { "fieldPath": "random_id",   "order": "ASCENDING" },
+        { "fieldPath": "geohash",     "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -3,11 +3,13 @@ import {
   View, Text, TouchableOpacity, StyleSheet, StatusBar,
   Image, ScrollView, Dimensions, NativeSyntheticEvent, NativeScrollEvent,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import * as SecureStore from 'expo-secure-store'
 import { useTranslation } from 'react-i18next'
 import { Ionicons } from '@expo/vector-icons'
 import { changeLanguage } from '../src/i18n'
+import { showAlert } from '../src/components/GlobalAlert'
 import { SecureStoreKey, UserRole } from '../src/types'
 
 const BRAND       = '#1A2E5E'
@@ -15,7 +17,9 @@ const BRAND_LIGHT = '#E8EDF6'
 const BRAND_MUTED = '#F0F4FB'
 
 // PAGE_W = chiều rộng mỗi trang trong ScrollView (scroll.width phải bằng page.width)
-const CONTENT_W = Dimensions.get('window').width - 56   // content area trừ paddingH
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window')
+const isSmall   = SCREEN_H < 820                        // A03s, Samsung A30 gesture nav, và màn nhỏ
+const CONTENT_W = SCREEN_W - 56                         // content area trừ paddingH
 const ARROW_W   = 40
 const GAP       = 8
 const PAGE_W    = CONTENT_W - (ARROW_W + GAP) * 2      // phần còn lại cho ScrollView
@@ -70,6 +74,7 @@ const ROLES: RoleItem[] = [
 
 export default function RoleSelectScreen() {
   const { t, i18n } = useTranslation()
+  const insets        = useSafeAreaInsets()
   const [lang, setLang]   = useState<'vi' | 'en'>(i18n.language as 'vi' | 'en')
   const [idx, setIdx]     = useState(0)
   const scrollRef         = useRef<ScrollView>(null)
@@ -77,8 +82,12 @@ export default function RoleSelectScreen() {
   const isProgrammatic    = useRef(false)    // true khi scroll do mũi tên, bỏ qua onMomentumScrollEnd
 
   async function selectRole(role: UserRole) {
-    await SecureStore.setItemAsync(SecureStoreKey.USER_ROLE, role)
-    router.replace(`/(auth)/phone?role=${role}`)
+    try {
+      await SecureStore.setItemAsync(SecureStoreKey.USER_ROLE, role)
+      router.replace(`/(auth)/phone?role=${role}`)
+    } catch (e: unknown) {
+      showAlert('Lỗi', (e as Error).message)
+    }
   }
 
   async function toggleLang() {
@@ -111,14 +120,14 @@ export default function RoleSelectScreen() {
     <View style={s.root}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-      {/* Language – absolute top right */}
-      <TouchableOpacity style={s.langPill} onPress={toggleLang} activeOpacity={0.8}>
+      {/* Language – absolute top right, căn theo insets.top thực tế của thiết bị */}
+      <TouchableOpacity style={[s.langPill, { top: insets.top + 12 }]} onPress={toggleLang} activeOpacity={0.8}>
         <Text style={s.langText}>{lang === 'vi' ? '🇻🇳  Tiếng Việt' : '🇬🇧  English'}</Text>
         <Ionicons name="chevron-down" size={13} color={BRAND} />
       </TouchableOpacity>
 
-      {/* ── Main content ── */}
-      <View style={s.content}>
+      {/* ── Main content – paddingTop động theo insets.top tránh overlap status bar ── */}
+      <View style={[s.content, { paddingTop: insets.top + (isSmall ? 44 : 64) }]}>
 
         {/* Logo */}
         <Image
@@ -193,8 +202,8 @@ export default function RoleSelectScreen() {
 
       </View>
 
-      {/* Footer */}
-      <View style={s.footer}>
+      {/* Footer – paddingBottom động để tránh navigation bar trên Samsung */}
+      <View style={[s.footer, { paddingBottom: insets.bottom + 16 }]}>
         <TouchableOpacity style={s.footerBtn} activeOpacity={0.75} onPress={() => router.push('/blockchain')}>
           <Ionicons name="cube-outline" size={15} color={BRAND} style={{ marginRight: 5 }} />
           <Text style={s.footerBtnText}>{t('roleSelect.blockchain')}</Text>
@@ -216,7 +225,7 @@ const s = StyleSheet.create({
 
   langPill: {
     position:          'absolute',
-    top:               52,
+    top:               0,   // overridden inline với insets.top + 12
     right:             24,
     zIndex:            10,
     flexDirection:     'row',
@@ -240,14 +249,14 @@ const s = StyleSheet.create({
     alignItems:        'center',
     justifyContent:    'flex-start',
     paddingHorizontal: 28,
-    paddingTop:        92,
+    paddingTop:        0,   // overridden inline với insets.top + offset
     paddingBottom:     8,
   },
 
   logo: {
-    width:        160,
-    height:       160,
-    marginBottom: -28,
+    width:        isSmall ? 120 : 160,
+    height:       isSmall ? 120 : 160,
+    marginBottom: isSmall ? -20 : -28,
   },
 
   slogan: {
@@ -282,7 +291,7 @@ const s = StyleSheet.create({
     width:           '70%',
     height:          1,
     backgroundColor: '#E2E8F0',
-    marginVertical:  18,
+    marginVertical:  isSmall ? 10 : 18,
   },
 
   // ── Carousel ──
@@ -315,9 +324,9 @@ const s = StyleSheet.create({
   },
 
   iconRing: {
-    width:           148,
-    height:          148,
-    borderRadius:    74,
+    width:           isSmall ? 118 : 148,
+    height:          isSmall ? 118 : 148,
+    borderRadius:    isSmall ? 59 : 74,
     backgroundColor: BRAND_MUTED,
     borderWidth:     2.5,
     borderColor:     BRAND_LIGHT,
@@ -330,9 +339,9 @@ const s = StyleSheet.create({
     elevation:       6,
   },
   iconInner: {
-    width:           108,
-    height:          108,
-    borderRadius:    54,
+    width:           isSmall ? 84 : 108,
+    height:          isSmall ? 84 : 108,
+    borderRadius:    isSmall ? 42 : 54,
     backgroundColor: '#FFFFFF',
     alignItems:      'center',
     justifyContent:  'center',
@@ -353,8 +362,8 @@ const s = StyleSheet.create({
   dots: {
     flexDirection: 'row',
     gap:           6,
-    marginTop:     16,
-    marginBottom:  22,
+    marginTop:     isSmall ? 10 : 16,
+    marginBottom:  isSmall ? 14 : 22,
   },
   dot: {
     width:           8,
@@ -385,7 +394,7 @@ const s = StyleSheet.create({
     flexDirection:     'row',
     gap:               12,
     paddingHorizontal: 24,
-    paddingBottom:     32,
+    paddingBottom:     16,  // overridden inline với insets.bottom + 16
   },
   footerBtn: {
     flex:            1,

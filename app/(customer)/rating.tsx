@@ -1,32 +1,32 @@
+// app/(customer)/rating.tsx
+
 import React, { useState } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useLocalSearchParams, router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { Ionicons } from '@expo/vector-icons'
-import { sendMessage } from '../../src/services/webrtc'
-import type { RatingValue, DCRatingMessage } from '../../src/types'
+import { rtdb } from '../../src/services/firebase'
+import type { RatingValue } from '../../src/types'
 
 const BRAND      = '#1A2E5E'
 const STAR_HINTS = ['Rất tệ', 'Chưa hài lòng', 'Bình thường', 'Tốt lắm!', 'Tuyệt vời!']
 const STAR_VALUES: RatingValue[] = [1, 2, 3, 4, 5]
 
 export default function RatingScreen() {
-  const { t }    = useTranslation()
+  const { t }      = useTranslation()
   const { tripId } = useLocalSearchParams<{ tripId: string }>()
   const [selected, setSelected] = useState<RatingValue | null>(null)
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!selected || !tripId) return
-    const msg: DCRatingMessage = { type: 'rating', value: selected }
-    sendMessage(tripId, msg)
+    await rtdb.set(`trips/${tripId}/rating`, selected).catch(() => {})
     router.replace('/(customer)/home')
   }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.center}>
-        {/* Icon */}
         <View style={styles.iconWrap}>
           <Ionicons name="checkmark-circle" size={64} color={BRAND} />
         </View>
@@ -34,7 +34,6 @@ export default function RatingScreen() {
         <Text style={styles.title}>{t('trip.completed')}</Text>
         <Text style={styles.subtitle}>{t('trip.rateDriver')}</Text>
 
-        {/* Stars */}
         <View style={styles.starsRow}>
           {STAR_VALUES.map((v) => {
             const filled = selected !== null && v <= selected
@@ -50,13 +49,11 @@ export default function RatingScreen() {
           })}
         </View>
 
-        {/* Hint text */}
         <Text style={styles.hintText}>
           {selected ? STAR_HINTS[selected - 1] : t('trip.ratePlaceholder')}
         </Text>
       </View>
 
-      {/* Footer buttons */}
       <View style={styles.footer}>
         <TouchableOpacity
           style={[styles.submitBtn, !selected && styles.submitBtnDisabled]}
@@ -71,7 +68,7 @@ export default function RatingScreen() {
           style={styles.skipBtn}
           onPress={() => router.replace('/(customer)/home')}
         >
-          <Text style={styles.skipText}>Bỏ qua</Text>
+          <Text style={styles.skipText}>{t('common.skip')}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

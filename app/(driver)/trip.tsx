@@ -1,362 +1,517 @@
 // app/(driver)/trip.tsx
-// Màn hình tài xế đang chạy chuyến – gửi vị trí qua DataChannel
 
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Linking,
-  ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, Linking,
+  ActivityIndicator, StatusBar,
 } from 'react-native'
 import { showAlert } from '../../src/components/GlobalAlert'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
+import { Ionicons } from '@expo/vector-icons'
 import * as Location from 'expo-location'
+import * as Notifications from 'expo-notifications'
+import MapView from '../../src/components/MapView'
+import type { MapViewHandle } from '../../src/components/MapView'
 import { createAnswerConnection, closePeerConnection, sendMessage } from '../../src/services/webrtc'
-import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip } from '../../src/utils/storage'
+import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip, saveDriverInfo } from '../../src/utils/storage'
 import { recordTrip } from '../../src/services/cloudflare'
 import { updateDriverStatus } from '../../src/services/firestore'
 import { encodeMemo } from '../../src/services/odc'
 import { rtdb } from '../../src/services/firebase'
-import { LOCATION, COLORS } from '../../src/constants'
+import { maskPhone } from '../../src/utils/format'
+import { LOCATION } from '../../src/constants'
 import type {
-  PendingTrip,
-  DCLocationMessage,
-  DCStatusMessage,
-  DCTripInfoMessage,
-  DCRatingMessage,
-  DataChannelMessage,
-  DriverInfo,
-  RatingValue,
+  PendingTrip, DCLocationMessage, DCStatusMessage,
+  DataChannelMessage, DriverInfo, RatingValue, TripRealtimeInfo,
 } from '../../src/types'
 
+const BRAND        = '#1A2E5E'
+const BRAND_LIGHT  = '#E8EDF6'
+const WEBRTC_TIMEOUT_MS = 5_000
+
 export default function TripScreen() {
-  const { t } = useTranslation()
+  const { t }    = useTranslation()
+  const insets   = useSafeAreaInsets()
+  const mapRef   = useRef<MapViewHandle>(null)
+
   const [pendingTrip,      setPendingTrip]      = useState<PendingTrip | null>(null)
-  const [pickedUp,         setPickedUp]         = useState(false)
   const [driverInfo,       setDriverInfo]       = useState<DriverInfo | null>(null)
-  const [connected,        setConnected]        = useState(false)
-  const [sentTripInfo,     setSentTripInfo]     = useState(false)
+  const [mapInit,          setMapInit]          = useState<{ lat: number; lng: number } | null>(null)
+  const [pickedUp,         setPickedUp]         = useState(false)
   const [waitingForRating, setWaitingForRating] = useState(false)
   const [submitting,       setSubmitting]       = useState(false)
-  const intervalRef     = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [pickupAddress,    setPickupAddress]    = useState('')
+  const [destAddress,      setDestAddress]      = useState('')
+  const [tripNote,         setTripNote]         = useState('')
+  const [dropLat,          setDropLat]          = useState<number | null>(null)
+  const [dropLng,          setDropLng]          = useState<number | null>(null)
+
+  const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const ratingPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
   const ratingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const bridgeRef       = useRef<any | null>(null)
+  const webrtcTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bridgeRef        = useRef<any | null>(null)
+  const pickedUpRef      = useRef(false)
+  const connectedRef     = useRef(false)
+  const usingRtdbRef     = useRef(false)
+  const pendingTripRef   = useRef<PendingTrip | null>(null)
+  const driverInfoRef    = useRef<DriverInfo | null>(null)
+  const mapInitRef       = useRef<{ lat: number; lng: number } | null>(null)
 
   useEffect(() => {
-    getPendingTrip().then(setPendingTrip)
-    getDriverInfo().then(setDriverInfo)
+    async function load() {
+      const [trip, drv] = await Promise.all([getPendingTrip(), getDriverInfo()])
+      setPendingTrip(trip)
+      pendingTripRef.current = trip
+      setDriverInfo(drv)
+      driverInfoRef.current = drv
+
+      try {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        const pos2d = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+        setMapInit(pos2d)
+        mapInitRef.current = pos2d
+      } catch {}
+
+      if (trip) {
+        try {
+          const info = await rtdb.get<TripRealtimeInfo>(`trips/${trip.tripId}/info`)
+          if (info?.pickupAddress) setPickupAddress(info.pickupAddress)
+          if (info?.destAddress)   setDestAddress(info.destAddress)
+          if (info?.note)          setTripNote(info.note)
+          if (info?.dropLat)       setDropLat(info.dropLat)
+          if (info?.dropLng)       setDropLng(info.dropLng)
+        } catch {}
+      }
+    }
+    load()
   }, [])
 
+  // Ghi trip_info lên RTDB 1 lần
+  useEffect(() => {
+    if (!pendingTrip || !driverInfo) return
+    rtdb.set(`trips/${pendingTrip.tripId}/trip_info`, {
+      driverName:   driverInfo.name,
+      driverPhone:  driverInfo.phone,
+      vehicleBrand: driverInfo.vehicleBrand,
+      licensePlate: driverInfo.licensePlate,
+    }).catch(() => {})
+  }, [pendingTrip, driverInfo])
+
+  // Khởi tạo WebRTC + fallback 5s
   useEffect(() => {
     if (!pendingTrip) return
-
     const tripId = pendingTrip.tripId
     let mounted = true
 
-    async function initConnection() {
+    async function initWebRTC() {
       try {
         const bridge = await createAnswerConnection(
           tripId,
           handleDataChannelMessage,
-          () => { if (mounted) setConnected(true) },
+          () => {
+            if (!mounted) return
+            connectedRef.current = true
+            if (webrtcTimerRef.current) { clearTimeout(webrtcTimerRef.current); webrtcTimerRef.current = null }
+            startLocationInterval(tripId, 'webrtc')
+          },
         )
         bridgeRef.current = bridge
       } catch {
-        if (mounted) showAlert(t('common.error'), t('error.serverError'))
+        if (mounted) activateRtdb(tripId)
       }
     }
 
-    initConnection()
+    initWebRTC()
+    webrtcTimerRef.current = setTimeout(() => {
+      if (!connectedRef.current) activateRtdb(tripId)
+    }, WEBRTC_TIMEOUT_MS)
 
     return () => {
       mounted = false
+      if (webrtcTimerRef.current) clearTimeout(webrtcTimerRef.current)
+      if (intervalRef.current) clearInterval(intervalRef.current)
       bridgeRef.current?.stop()
       closePeerConnection(tripId)
     }
   }, [pendingTrip])
 
-  function handleDataChannelMessage(msg: DataChannelMessage) {
-    if (msg.type === 'rating') {
-      const ratingMsg = msg as DCRatingMessage
-      submitTrip(ratingMsg.value)
-    }
+  function activateRtdb(tripId: string) {
+    if (usingRtdbRef.current) return
+    usingRtdbRef.current = true
+    startLocationInterval(tripId, 'rtdb')
   }
 
-  // Gửi vị trí qua DataChannel mỗi 4s khi chưa đón khách
-  useEffect(() => {
-    if (!pendingTrip || pickedUp) return
-
+  function startLocationInterval(tripId: string, mode: 'webrtc' | 'rtdb') {
+    if (intervalRef.current) clearInterval(intervalRef.current)
     intervalRef.current = setInterval(async () => {
+      if (pickedUpRef.current) return
       try {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-        const msg: DCLocationMessage = {
-          type:      'location',
-          lat:       loc.coords.latitude,
-          lng:       loc.coords.longitude,
-          timestamp: Date.now(),
+        const lat = loc.coords.latitude
+        const lng = loc.coords.longitude
+        mapRef.current?.updateDriverMarker(lat, lng)
+        mapRef.current?.panTo(lat, lng)
+        if (mode === 'webrtc') {
+          sendMessage(tripId, { type: 'location', lat, lng, timestamp: Date.now() } as DCLocationMessage)
+        } else {
+          await rtdb.set(`trips/${tripId}/location`, { lat, lng, timestamp: Date.now() })
         }
-        sendMessage(pendingTrip.tripId, msg)
-      } catch {
-        // bỏ qua lỗi vị trí
-      }
+      } catch {}
     }, LOCATION.DATACHANNEL_INTERVAL_MS)
+  }
 
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-  }, [pendingTrip, pickedUp])
+  function handleDataChannelMessage(_msg: DataChannelMessage) {}
 
-  // Gửi trip_info khi kết nối xong
-  useEffect(() => {
-    if (!connected || sentTripInfo || !pendingTrip || !driverInfo) return
+  function handleAbandon() {
+    showAlert(t('trip.abandonTrip'), t('trip.abandonConfirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('trip.abandonTrip'), style: 'destructive',
+        onPress: async () => {
+          if (intervalRef.current) clearInterval(intervalRef.current)
+          bridgeRef.current?.stop()
 
-    const infoMsg: DCTripInfoMessage = {
-      type:         'trip_info',
-      driverName:   driverInfo.name,
-      driverPhone:  driverInfo.phone,
-      vehicleBrand: driverInfo.vehicleBrand,
-      licensePlate: driverInfo.licensePlate,
-    }
+          // Ghi nhận hủy chuyến → trừ phạt ODC 3× baseFee
+          if (pendingTrip && driverInfo) {
+            try {
+              const encryptedPrivateKey = await getEncryptedKey()
+              if (encryptedPrivateKey) {
+                const memo27bytes = encodeMemo(
+                  driverInfo.phone, pendingTrip.customerPhone,
+                  pendingTrip.pickupGeohash, pendingTrip.dropGeohash, 1,
+                )
+                await recordTrip({
+                  driverUid: driverInfo.uid,
+                  rating: 1,
+                  tripPrice: pendingTrip.tripPrice,
+                  memo27bytes,
+                  isCancelled: true,
+                  encryptedPrivateKey,
+                })
+              }
+            } catch {}
+          }
 
-    sendMessage(pendingTrip.tripId, infoMsg)
-    setSentTripInfo(true)
-  }, [connected, sentTripInfo, pendingTrip, driverInfo])
+          if (pendingTrip) await rtdb.delete(`trips/${pendingTrip.tripId}`).catch(() => {})
+          await clearPendingTrip()
+          if (driverInfo) updateDriverStatus(driverInfo.uid, 'offline').catch(() => {})
+          router.replace('/(driver)/home')
+        },
+      },
+    ])
+  }
 
   function handlePickedUp() {
     if (!pendingTrip) return
-    if (intervalRef.current) clearInterval(intervalRef.current)
+    pickedUpRef.current = true
     setPickedUp(true)
-    const msg: DCStatusMessage = { type: 'status', status: 'picked_up' }
-    sendMessage(pendingTrip.tripId, msg)
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
+    mapRef.current?.hideCustomerMarker()
+    if (!usingRtdbRef.current) {
+      sendMessage(pendingTrip.tripId, { type: 'status', status: 'picked_up' } as DCStatusMessage)
+    }
+    rtdb.set(`trips/${pendingTrip.tripId}/trip_status`, 'picked_up').catch(() => {})
   }
 
-  function handleOpenMaps() {
+  async function handleOpenMaps() {
     if (!pendingTrip) return
-    const url = `https://www.google.com/maps/search/?api=1&query=${pendingTrip.pickupGeohash}`
+    const lat = pickedUp ? dropLat : pendingTrip.pickupLat
+    const lng = pickedUp ? dropLng : pendingTrip.pickupLng
+    if (!lat || !lng) return
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`
+
     Linking.openURL(url).catch(() => showAlert(t('common.error'), t('error.unknown')))
+    // Notification nhắc quay lại app
+    Notifications.scheduleNotificationAsync({
+      content: { title: '📍 OpenDrive', body: 'Nhấn để quay lại chuyến đi' },
+      trigger: null,
+    }).catch(() => {})
   }
 
   function handleEndTrip() {
-    showAlert(
-      t('trip.completed'),
-      t('trip.waitForRating'),
-      [
-        { text: t('common.cancel'), style: 'cancel' },
-        {
-          text: t('common.confirm'),
-          onPress: () => {
-            if (!pendingTrip) return
-            // Báo cho khách biết chuyến kết thúc → khách sẽ gửi rating
-            const msg: DCStatusMessage = { type: 'status', status: 'completed' }
-            sendMessage(pendingTrip.tripId, msg)
-            setWaitingForRating(true)
-
-            // Timeout 30s: nếu không nhận được rating → dùng rating mặc định 3
-            ratingTimeoutRef.current = setTimeout(() => {
-              submitTrip(3 as RatingValue)
-            }, 30_000)
-          },
+    showAlert(t('trip.completed'), t('trip.waitForRating'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('common.confirm'),
+        onPress: () => {
+          if (!pendingTrip) return
+          if (!usingRtdbRef.current) {
+            sendMessage(pendingTrip.tripId, { type: 'status', status: 'completed' } as DCStatusMessage)
+          }
+          rtdb.set(`trips/${pendingTrip.tripId}/trip_status`, 'completed').catch(() => {})
+          setWaitingForRating(true)
+          startRatingPoll()
         },
-      ]
-    )
+      },
+    ])
+  }
+
+  function startRatingPoll() {
+    if (!pendingTrip) return
+    const tripId = pendingTrip.tripId
+    ratingPollRef.current = setInterval(async () => {
+      try {
+        const rating = await rtdb.get<number>(`trips/${tripId}/rating`)
+        if (rating != null) { stopRatingPoll(); submitTrip(rating as RatingValue) }
+      } catch {}
+    }, 2000)
+    ratingTimeoutRef.current = setTimeout(() => {
+      stopRatingPoll()
+      submitTrip(3 as RatingValue)
+    }, 30_000)
+  }
+
+  function stopRatingPoll() {
+    if (ratingPollRef.current)    clearInterval(ratingPollRef.current)
+    if (ratingTimeoutRef.current) clearTimeout(ratingTimeoutRef.current)
+    ratingPollRef.current    = null
+    ratingTimeoutRef.current = null
   }
 
   async function submitTrip(rating: RatingValue) {
     if (!pendingTrip || !driverInfo || submitting) return
-
-    // Hủy timeout nếu rating đến sớm
-    if (ratingTimeoutRef.current) {
-      clearTimeout(ratingTimeoutRef.current)
-      ratingTimeoutRef.current = null
-    }
-
     setSubmitting(true)
     try {
       const encryptedPrivateKey = await getEncryptedKey()
       if (!encryptedPrivateKey) throw new Error('No encrypted key')
-
       const memo27bytes = encodeMemo(
-        driverInfo.phone,
-        pendingTrip.customerPhone,
-        pendingTrip.pickupGeohash,
-        pendingTrip.dropGeohash,
-        rating,
+        driverInfo.phone, pendingTrip.customerPhone,
+        pendingTrip.pickupGeohash, pendingTrip.dropGeohash, rating,
       )
-
       await recordTrip({
-        driverUid: driverInfo.uid,
-        rating,
-        tripPrice:  pendingTrip.tripPrice,
-        memo27bytes,
-        isCancelled: false,
-        encryptedPrivateKey,
+        driverUid: driverInfo.uid, rating, tripPrice: pendingTrip.tripPrice,
+        memo27bytes, isCancelled: false, encryptedPrivateKey,
       })
-
+      const isFirstTrip = !driverInfo.firstTripDone
+      if (isFirstTrip) await saveDriverInfo({ ...driverInfo, firstTripDone: true }).catch(() => {})
       await clearPendingTrip()
-      await updateDriverStatus(driverInfo.uid, 'offline')
-
-      // Xóa trip khỏi Realtime DB
+      await updateDriverStatus(driverInfo.uid, 'ready')
       await rtdb.delete(`trips/${pendingTrip.tripId}`).catch(() => {})
-
-      router.replace('/(driver)/home')
-    } catch {
+      if (isFirstTrip) {
+        showAlert(t('trip.firstTripTitle'), t('trip.firstTripBonus'), [
+          { text: 'OK', onPress: () => router.replace('/(driver)/online') },
+        ])
+      } else {
+        router.replace('/(driver)/online')
+      }
+    } catch (e) {
       setSubmitting(false)
       setWaitingForRating(false)
-      showAlert(t('common.error'), t('error.serverError'))
+      showAlert(t('common.error'), String(e))
     }
   }
 
   if (!pendingTrip) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.loadingText}>{t('common.loading')}</Text>
+      <View style={styles.fullCenter}>
+        <ActivityIndicator size="large" color={BRAND} />
       </View>
     )
   }
 
-  // Màn hình chờ đánh giá từ khách
   if (waitingForRating) {
     return (
-      <View style={styles.center}>
-        {submitting
-          ? <ActivityIndicator size="large" color={COLORS.driver.primary} />
-          : (
-            <>
-              <ActivityIndicator size="large" color={COLORS.driver.primary} />
-              <Text style={[styles.loadingText, { marginTop: 16 }]}>{t('trip.waitForRating')}</Text>
-            </>
-          )}
+      <View style={styles.fullCenter}>
+        <ActivityIndicator size="large" color={BRAND} />
+        <Text style={styles.waitText}>{t('trip.waitForRating')}</Text>
       </View>
     )
   }
 
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>{t('trip.inProgress')}</Text>
-      <Text style={styles.connectionStatus}>
-        {connected ? t('trip.connected') : t('trip.connecting')}
-      </Text>
+  const priceFormatted = pendingTrip.tripPrice.toLocaleString('vi-VN')
 
-      <View style={styles.card}>
-        <InfoRow label={t('auth.enterPhone')} value={pendingTrip.customerPhone} />
-        <InfoRow label={t('trip.pickup')}     value={pendingTrip.pickupGeohash} />
-        <InfoRow
-          label={t('driver.status.busy')}
-          value={pickedUp ? t('trip.inProgress') : t('trip.driverComing')}
-        />
+  return (
+    <View style={styles.root}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+
+      {/* Map full screen */}
+      <View style={StyleSheet.absoluteFill}>
+        {mapInit ? (
+          <MapView
+            ref={mapRef}
+            lat={mapInit.lat}
+            lng={mapInit.lng}
+            onMapReady={() => {
+              const trip = pendingTripRef.current
+              const dPos = mapInitRef.current
+              if (trip?.pickupLat && trip?.pickupLng) {
+                mapRef.current?.showCustomerMarker(trip.pickupLat, trip.pickupLng)
+                if (dPos) {
+                  // paddingBottom 320 để tránh panel phía dưới che mất pin
+                  mapRef.current?.fitBoundsToMarkers(dPos.lat, dPos.lng, trip.pickupLat, trip.pickupLng, 320)
+                }
+              }
+            }}
+          />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: BRAND_LIGHT }]} />
+        )}
       </View>
 
-      <TouchableOpacity style={styles.mapsButton} onPress={handleOpenMaps}>
-        <Text style={styles.mapsButtonText}>🗺 {t('trip.pickup')}</Text>
-      </TouchableOpacity>
+      {/* Header overlay */}
+      <SafeAreaView style={styles.headerOverlay} edges={['top']} pointerEvents="box-none">
+        <View style={styles.headerRow}>
+          <View style={[styles.statusPill, { backgroundColor: pickedUp ? BRAND : '#F59E0B' }]}>
+            <Ionicons name={pickedUp ? 'car-outline' : 'navigate-outline'} size={14} color="#fff" />
+            <Text style={styles.statusPillText}>
+              {pickedUp ? t('trip.inProgress') : t('trip.driverComing')}
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.abandonBtn} onPress={handleAbandon} activeOpacity={0.8}>
+            <Text style={styles.abandonBtnText}>{t('trip.abandonTrip')}</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
 
-      {!pickedUp && (
-        <TouchableOpacity style={styles.pickupButton} onPress={handlePickedUp}>
-          <Text style={styles.pickupButtonText}>{t('trip.driverArrived')}</Text>
-        </TouchableOpacity>
-      )}
+      {/* Bottom panel */}
+      <View style={[styles.panel, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View style={styles.handle} />
 
-      <TouchableOpacity style={styles.endButton} onPress={handleEndTrip}>
-        <Text style={styles.endButtonText}>{t('trip.completed')}</Text>
-      </TouchableOpacity>
-    </View>
-  )
-}
+        {/* Price + SĐT khách (bấm để gọi) */}
+        <View style={styles.priceRow}>
+          <View>
+            <Text style={styles.priceLabel}>{t('online.priceLabel')}</Text>
+            <Text style={styles.priceValue}>{priceFormatted} đ</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.customerChip}
+            onPress={() => Linking.openURL(`tel:${pendingTrip.customerPhone}`)}
+            activeOpacity={0.75}
+          >
+            <Ionicons name="call-outline" size={13} color={BRAND} />
+            <Text style={styles.customerChipText}>{maskPhone(pendingTrip.customerPhone)}</Text>
+          </TouchableOpacity>
+        </View>
 
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.rowValue}>{value}</Text>
+        {/* Điểm đón */}
+        {!!pickupAddress && (
+          <View style={styles.addressRow}>
+            <Ionicons name="location-sharp" size={14} color={BRAND} style={{ marginTop: 2, flexShrink: 0 }} />
+            <Text style={styles.addressText} numberOfLines={2}>{pickupAddress}</Text>
+          </View>
+        )}
+
+        {/* Điểm đến */}
+        {!!destAddress && (
+          <View style={styles.addressRow}>
+            <Ionicons name="location-sharp" size={14} color="#94A3B8" style={{ marginTop: 2, flexShrink: 0 }} />
+            <Text style={styles.addressText} numberOfLines={2}>{destAddress}</Text>
+          </View>
+        )}
+
+        {/* Ghi chú */}
+        {!!tripNote && (
+          <View style={[styles.addressRow, { backgroundColor: '#FFFBEB' }]}>
+            <Ionicons name="chatbubble-ellipses-outline" size={14} color="#F59E0B" style={{ marginTop: 2, flexShrink: 0 }} />
+            <Text style={[styles.addressText, { color: '#92400E', fontStyle: 'italic' }]} numberOfLines={3}>
+              <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Ghi chú: </Text>{tripNote}
+            </Text>
+          </View>
+        )}
+
+        <View style={styles.btnGroup}>
+          {/* Dẫn đường Google Maps */}
+          <TouchableOpacity style={styles.mapsBtn} onPress={handleOpenMaps} activeOpacity={0.8}>
+            <Ionicons name="map-outline" size={16} color={BRAND} />
+            <Text style={styles.mapsBtnText}>
+              {pickedUp ? 'Dẫn đường đến điểm đến' : 'Dẫn đường đến điểm đón'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Đến điểm đón → sau khi bấm đổi thành Hoàn thành */}
+          {!pickedUp ? (
+            <TouchableOpacity style={styles.pickupBtn} onPress={handlePickedUp} activeOpacity={0.85}>
+              <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+              <Text style={styles.pickupBtnText}>{t('trip.driverArrived')}</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.endBtn} onPress={handleEndTrip} activeOpacity={0.85}>
+              <Ionicons name="flag-outline" size={16} color="#fff" />
+              <Text style={styles.endBtnText}>{t('trip.completed')}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex:            1,
-    backgroundColor: COLORS.driver.background,
-    padding:         16,
+  root:       { flex: 1, backgroundColor: '#E8EDF6' },
+  fullCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC', gap: 16 },
+  waitText:   { fontSize: 15, color: '#64748B', fontWeight: '600', textAlign: 'center' },
+
+  // Header overlay
+  headerOverlay: { position: 'absolute', top: 0, left: 0, right: 0 },
+  headerRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginHorizontal: 14, marginTop: 10, gap: 10,
   },
-  center: {
-    flex:           1,
-    alignItems:     'center',
-    justifyContent: 'center',
+  statusPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15, shadowRadius: 6, elevation: 4,
   },
-  loadingText: {
-    fontSize: 16,
-    color:    '#64748B',
+  statusPillText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  abandonBtn: {
+    backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.10, shadowRadius: 6, elevation: 3,
   },
-  title: {
-    fontSize:     22,
-    fontWeight:   '700',
-    color:        COLORS.driver.textPrimary,
-    marginBottom: 20,
+  abandonBtnText: { fontSize: 13, fontWeight: '600', color: '#DC2626' },
+
+  // Bottom panel
+  panel: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: 20, paddingTop: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.10, shadowRadius: 16, elevation: 20,
   },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius:    12,
-    padding:         16,
-    marginBottom:    20,
-    elevation:       2,
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0', alignSelf: 'center', marginBottom: 16 },
+
+  priceRow: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', marginBottom: 12,
   },
-  row: {
-    flexDirection:   'row',
-    justifyContent:  'space-between',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+  priceLabel: { fontSize: 11, fontWeight: '600', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
+  priceValue: { fontSize: 26, fontWeight: '800', color: BRAND },
+
+  customerChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: '#E8EDF6', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20,
   },
-  rowLabel: {
-    fontSize: 14,
-    color:    '#64748B',
+  customerChipText: { fontSize: 13, fontWeight: '600', color: BRAND },
+
+  addressRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    backgroundColor: '#F8FAFC', borderRadius: 10, padding: 10, marginBottom: 14,
   },
-  rowValue: {
-    fontSize:   14,
-    fontWeight: '600',
-    color:      '#0F172A',
+  addressText: { flex: 1, fontSize: 13, color: '#334155', lineHeight: 18 },
+
+  // Buttons
+  btnGroup: { gap: 10 },
+  mapsBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, paddingVertical: 12,
+    backgroundColor: '#F8FAFC',
   },
-  mapsButton: {
-    backgroundColor: '#2563EB',
-    padding:         14,
-    borderRadius:    10,
-    alignItems:      'center',
-    marginBottom:    12,
+  mapsBtnText: { fontSize: 14, fontWeight: '700', color: BRAND },
+
+  pickupBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: BRAND, borderRadius: 12, paddingVertical: 14,
   },
-  mapsButtonText: {
-    color:      '#FFFFFF',
-    fontSize:   16,
-    fontWeight: '600',
+  pickupBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+
+  endBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#DC2626', borderRadius: 12, paddingVertical: 14,
   },
-  pickupButton: {
-    backgroundColor: COLORS.driver.primary,
-    padding:         14,
-    borderRadius:    10,
-    alignItems:      'center',
-    marginBottom:    12,
-  },
-  pickupButtonText: {
-    color:      '#FFFFFF',
-    fontSize:   16,
-    fontWeight: '600',
-  },
-  endButton: {
-    backgroundColor: COLORS.driver.danger,
-    padding:         14,
-    borderRadius:    10,
-    alignItems:      'center',
-  },
-  endButtonText: {
-    color:      '#FFFFFF',
-    fontSize:   16,
-    fontWeight: '600',
-  },
-  connectionStatus: {
-    fontSize: 14,
-    color: '#475569',
-    marginBottom: 10,
-  },
+  endBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 })

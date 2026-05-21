@@ -1,0 +1,179 @@
+
+ ⛅️ wrangler 4.91.0
+───────────────────
+Successfully created tail, expires at 2026-05-20T21:20:23Z
+Connected to opendrive-notify-drivers, waiting for logs...
+POST https://opendrive-notify-drivers.opendrive-odc.workers.dev/ - Ok @ 5/20/2026, 10:20:51 PM
+  (log) [notify-drivers] projectId=opendrive-8aa5d geohash=w3gv5y vehicleType=motorbike
+  (log) [firestore-test] status=200 docs=3 error=none
+  (log) [debug] total drivers in Firestore: 5
+  (log) [debug] name=Lam Quoc Trung status=ready vehicleType=car4 geohash=w3gv5y random_id=5 hasFcm=true
+  (log) [debug] name=MOi status=offline vehicleType=car7 geohash= random_id=1 hasFcm=false
+  (log) [debug] name=HO NGOC PHUONG LINh status=offline vehicleType=car4 geohash= random_id=0 hasFcm=false
+  (log) [debug] name=TRUNg status=offline vehicleType=motorbike geohash= random_id=0 hasFcm=false
+  (log) [debug] name=Kien status=offline vehicleType=motorbike geohash= random_id=2 hasFcm=false
+  (log) [notify-drivers] random_id=3 found=0
+  (log) [notify-drivers] random_id=4 found=0
+  (log) [notify-drivers] random_id=5 found=0
+  (log) [notify-drivers] random_id=0 found=0
+  (log) [notify-drivers] random_id=1 found=0
+  (log) [notify-drivers] random_id=2 found=0
+POST https://opendrive-notify-drivers.opendrive-odc.workers.dev/ - Ok @ 5/20/2026, 10:21:46 PM
+  (log) [notify-drivers] projectId=opendrive-8aa5d geohash=w3gv5y vehicleType=car4
+  (log) [firestore-test] status=200 docs=3 error=none
+  (log) [debug] total drivers in Firestore: 5
+  (log) [debug] name=Lam Quoc Trung status=ready vehicleType=car4 geohash=w3gv5y random_id=5 hasFcm=true
+  (log) [debug] name=MOi status=offline vehicleType=car7 geohash= random_id=1 hasFcm=false
+  (log) [debug] name=HO NGOC PHUONG LINh status=offline vehicleType=car4 geohash= random_id=0 hasFcm=false
+  (log) [debug] name=TRUNg status=offline vehicleType=motorbike geohash= random_id=0 hasFcm=false
+  (log) [debug] name=Kien status=offline vehicleType=motorbike geohash= random_id=2 hasFcm=false
+  (log) [notify-drivers] random_id=4 found=0
+  (log) [notify-drivers] random_id=5 found=0
+  (log) [notify-drivers] random_id=0 found=0
+  (log) [notify-drivers] random_id=1 found=0
+  (log) [notify-drivers] random_id=2 found=0
+  (log) [notify-drivers] random_id=3 found=0
+POST https://opendrive-notify-drivers.opendrive-odc.workers.dev/ - Ok @ 5/20/2026, 10:24:07 PM
+  (log) [notify-drivers] projectId=opendrive-8aa5d geohash=w3gv5y vehicleType=car4
+  (log) [firestore-test] status=200 docs=3 error=none
+  (log) [debug] total drivers in Firestore: 5
+  (log) [debug] name=Lam Quoc Trung status=ready vehicleType=car4 geohash=w3gv5y random_id=5 hasFcm=true
+  (log) [debug] name=MOi status=offline vehicleType=car7 geohash= random_id=1 hasFcm=false
+  (log) [debug] name=HO NGOC PHUONG LINh status=offline vehicleType=car4 geohash= random_id=0 hasFcm=false
+  (log) [debug] name=TRUNg status=offline vehicleType=motorbike geohash= random_id=0 hasFcm=false
+  (log) [debug] name=Kien status=offline vehicleType=motorbike geohash= random_id=2 hasFcm=false
+  (log) [query-error] random_id=1 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=2 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=3 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=4 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=5 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=0 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+POST https://opendrive-notify-drivers.opendrive-odc.workers.dev/ - Ok @ 5/20/2026, 10:26:01 PM
+  (log) [notify-drivers] projectId=opendrive-8aa5d geohash=w3gv5y vehicleType=car4
+  (log) [firestore-test] status=200 docs=3 error=none
+  (log) [debug] total drivers in Firestore: 5
+  (log) [debug] name=Lam Quoc Trung status=ready vehicleType=car4 geohash=w3gv5y random_id=5 hasFcm=true
+  (log) [debug] name=MOi status=offline vehicleType=car7 geohash= random_id=1 hasFcm=false
+  (log) [debug] name=HO NGOC PHUONG LINh status=offline vehicleType=car4 geohash= random_id=0 hasFcm=false
+  (log) [debug] name=TRUNg status=offline vehicleType=motorbike geohash= random_id=0 hasFcm=false
+  (log) [debug] name=Kien status=offline vehicleType=motorbike geohash= random_id=2 hasFcm=false
+  (log) [query-error] random_id=5 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=0 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=1 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=2 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=3 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=4 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+POST https://opendrive-notify-drivers.opendrive-odc.workers.dev/ - Ok @ 5/20/2026, 10:27:18 PM
+  (log) [notify-drivers] projectId=opendrive-8aa5d geohash=w3gv5y vehicleType=car4
+  (log) [firestore-test] status=200 docs=3 error=none
+  (log) [debug] total drivers in Firestore: 5
+  (log) [debug] name=Lam Quoc Trung status=ready vehicleType=car4 geohash=w3gv5y random_id=5 hasFcm=true
+  (log) [debug] name=MOi status=offline vehicleType=car7 geohash= random_id=1 hasFcm=false
+  (log) [debug] name=HO NGOC PHUONG LINh status=offline vehicleType=car4 geohash= random_id=0 hasFcm=false
+  (log) [debug] name=TRUNg status=offline vehicleType=motorbike geohash= random_id=0 hasFcm=false
+  (log) [debug] name=Kien status=offline vehicleType=motorbike geohash= random_id=2 hasFcm=false
+  (log) [query-error] random_id=3 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=4 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=5 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=0 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=1 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+  (log) [query-error] random_id=2 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/opendrive-8aa5d/firestore/indexes?create_composit
+POST https://opendrive-notify-drivers.opendrive-odc.workers.dev/ - Ok @ 5/20/2026, 10:30:28 PM
+  (log) [notify-drivers] projectId=opendrive-8aa5d geohash=w3gv5y vehicleType=car4
+  (log) [firestore-test] status=200 docs=3 error=none
+  (log) [debug] total drivers in Firestore: 5
+  (log) [debug] name=Lam Quoc Trung status=ready vehicleType=car4 geohash=w3gv5y random_id=5 hasFcm=true
+  (log) [debug] name=MOi status=offline vehicleType=car7 geohash= random_id=1 hasFcm=false
+  (log) [debug] name=HO NGOC PHUONG LINh status=offline vehicleType=car4 geohash= random_id=0 hasFcm=false
+  (log) [debug] name=TRUNg status=offline vehicleType=motorbike geohash= random_id=0 hasFcm=false
+  (log) [debug] name=Kien status=offline vehicleType=motorbike geohash= random_id=2 hasFcm=false
+  (log) [query-error] random_id=1 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. That index is currently building and cannot be used yet. See its status here: https://console.firebase.google.com/v1/r/pro
+  (log) [query-error] random_id=2 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. That index is currently building and cannot be used yet. See its status here: https://console.firebase.google.com/v1/r/pro
+  (log) [query-error] random_id=3 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. That index is currently building and cannot be used yet. See its status here: https://console.firebase.google.com/v1/r/pro
+  (log) [query-error] random_id=4 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. That index is currently building and cannot be used yet. See its status here: https://console.firebase.google.com/v1/r/pro
+  (log) [query-error] random_id=5 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. That index is currently building and cannot be used yet. See its status here: https://console.firebase.google.com/v1/r/pro
+  (log) [query-error] random_id=0 status=400 body=[{
+  "error": {
+    "code": 400,
+    "message": "The query requires an index. That index is currently building and cannot be used yet. See its status here: https://console.firebase.google.com/v1/r/pro
+POST https://opendrive-notify-drivers.opendrive-odc.workers.dev/ - Ok @ 5/20/2026, 10:34:07 PM
+  (log) [notify-drivers] projectId=opendrive-8aa5d geohash=w3gv5y vehicleType=car4
+  (log) [firestore-test] status=200 docs=3 error=none
+  (log) [debug] total drivers in Firestore: 5
+  (log) [debug] name=Lam Quoc Trung status=ready vehicleType=car4 geohash=w3gv5y random_id=5 hasFcm=true
+  (log) [debug] name=MOi status=offline vehicleType=car7 geohash= random_id=1 hasFcm=false
+  (log) [debug] name=HO NGOC PHUONG LINh status=offline vehicleType=car4 geohash= random_id=0 hasFcm=false
+  (log) [debug] name=TRUNg status=offline vehicleType=motorbike geohash= random_id=0 hasFcm=false
+  (log) [debug] name=Kien status=offline vehicleType=motorbike geohash= random_id=2 hasFcm=false
+  (log) [notify-drivers] random_id=4 found=0
+  (log) [notify-drivers] random_id=5 found=1
+POST https://opendrive-notify-drivers.opendrive-odc.workers.dev/ - Ok @ 5/20/2026, 10:38:16 PM

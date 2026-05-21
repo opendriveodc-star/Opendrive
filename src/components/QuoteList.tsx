@@ -32,7 +32,7 @@ function QuoteItem({ quote, onSelect }: { quote: TripQuote; onSelect: (q: TripQu
           <Text style={styles.driverName}>{quote.driverName}</Text>
           <View style={styles.metaRow}>
             <Ionicons name="star" size={13} color="#F59E0B" />
-            <Text style={styles.meta}> {quote.rating.toFixed(1)} · {quote.ratingCount} chuyến</Text>
+            <Text style={styles.meta}> {quote.rating.toFixed(1)} · {quote.ratingCount} {t('trip.trips')}</Text>
           </View>
           <Text style={styles.meta}>{quote.vehicleBrand} · {quote.licensePlate}</Text>
         </View>

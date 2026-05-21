@@ -1,14 +1,18 @@
 // src/services/firestore.ts
 // Firestore queries – client đọc trực tiếp (Security Rules kiểm tra isOwner)
+// Writes dùng REST API trực tiếp để tránh WebChannel/gRPC issue trên Android
 
-import { getFirestore, doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore'
-import { auth } from './firebase'
+import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
+import { app } from './firebase'
+import { firestoreRest } from './firebase'
 import type { DriverDoc, MinerDoc, DriverInfo } from '../types'
 
-const db = getFirestore()
+const db = getFirestore(app)
 
 const withTimeout = <T>(p: Promise<T>, ms = 20000): Promise<T> =>
   Promise.race([p, new Promise<never>((_, r) => setTimeout(() => r(new Error('Kết nối máy chủ chậm, vui lòng thử lại.')), ms))])
+
+const now = () => new Date().toISOString()
 
 // ─── Drivers ─────────────────────────────────────────────────────────────────
 
@@ -26,30 +30,26 @@ export async function createDriver(uid: string, data: Omit<DriverDoc, 'updatedAt
 }
 
 export async function updateDriverStatus(uid: string, status: DriverDoc['status']): Promise<void> {
-  await withTimeout(updateDoc(doc(db, 'drivers', uid), { status, updatedAt: serverTimestamp() }))
+  await withTimeout(firestoreRest.patch('drivers', uid, { status, updatedAt: now() }))
 }
 
 export async function updateDriverLocation(uid: string, geohash: string): Promise<void> {
-  await withTimeout(updateDoc(doc(db, 'drivers', uid), { geohash, updatedAt: serverTimestamp() }))
+  await withTimeout(firestoreRest.patch('drivers', uid, { geohash, updatedAt: now() }))
 }
 
 export async function acceptNewTerms(uid: string, termsVersion: string): Promise<void> {
-  await withTimeout(updateDoc(doc(db, 'drivers', uid), {
-    termsVersion,
-    termsAcceptedAt: serverTimestamp(),
-    updatedAt:       serverTimestamp(),
-  }))
+  await withTimeout(firestoreRest.patch('drivers', uid, { termsVersion, updatedAt: now() }))
 }
 
 export async function updateDriverFcmToken(uid: string, fcmToken: string): Promise<void> {
-  await withTimeout(updateDoc(doc(db, 'drivers', uid), { fcmToken, updatedAt: serverTimestamp() }))
+  await withTimeout(firestoreRest.patch('drivers', uid, { fcmToken, updatedAt: now() }))
 }
 
 export async function updateDriverVehicleInfo(
   uid: string,
   fields: { name: string; vehicleType: string; transportModel: string; vehicleBrand: string; vehicleColor: string; licensePlate: string; avatarUrl?: string },
 ): Promise<void> {
-  await withTimeout(updateDoc(doc(db, 'drivers', uid), { ...fields, updatedAt: serverTimestamp() }))
+  await withTimeout(firestoreRest.patch('drivers', uid, { ...fields, updatedAt: now() }))
 }
 
 // ─── Miners ──────────────────────────────────────────────────────────────────

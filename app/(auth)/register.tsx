@@ -6,6 +6,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   StyleSheet, Image, StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { showAlert, showActionSheet } from '../../src/components/GlobalAlert'
 import { router } from 'expo-router'
 import * as SecureStore from 'expo-secure-store'
@@ -117,6 +118,10 @@ export default function RegisterScreen() {
   }
 
   async function handleRegister() {
+    if (!avatarUri) {
+      showAlert(t('common.error'), 'Vui lòng thêm ảnh đại diện')
+      return
+    }
     if (!name.trim() || !vehicleBrand.trim() || !licensePlate.trim()) {
       showAlert(t('common.error'), 'Vui lòng điền đầy đủ thông tin')
       return
@@ -143,7 +148,7 @@ export default function RegisterScreen() {
       const driverInfo: DriverInfo = {
         uid:            user.uid,
         phone:          user.phoneNumber ?? '',
-        name:           name.trim(),
+        name:           name.trim().toUpperCase(),
         vehicleType,
         transportModel,
         vehicleBrand:   vehicleBrand.trim(),
@@ -166,13 +171,13 @@ export default function RegisterScreen() {
       await createDriver(user.uid, {
         uid:                 user.uid,
         phone:               user.phoneNumber ?? '',
-        name:                name.trim(),
+        name:                name.trim().toUpperCase(),
         vehicleType,
         transportModel,
         vehicleBrand:        vehicleBrand.trim(),
         vehicleColor:        vehicleColor.trim().toUpperCase(),
         licensePlate:        licensePlate.trim().toUpperCase(),
-        avatarUrl,
+        avatarUrl:           avatarUrl ?? null,
         stellarWallet,
         encryptedPrivateKey,
         geohash:             '',
@@ -226,17 +231,19 @@ export default function RegisterScreen() {
 
   // ── Form khai báo ─────────────────────────────────────────────────────────
   return (
-    <KeyboardAvoidingView
-      style={s.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <SafeAreaView style={s.root} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
 
-        {/* Back */}
-        <TouchableOpacity style={s.back} onPress={() => router.replace('/role-select')} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={BRAND} />
+      {/* Top bar */}
+      <View style={s.topBar}>
+        <TouchableOpacity style={s.backBtn} onPress={() => router.replace('/role-select')} activeOpacity={0.7}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="chevron-back" size={22} color={BRAND} />
         </TouchableOpacity>
+      </View>
+
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={s.formScroll} keyboardShouldPersistTaps="handled">
 
         {/* Avatar upload – thay logo */}
         <TouchableOpacity style={s.avatarWrap} onPress={pickAvatar} activeOpacity={0.8}>
@@ -257,7 +264,7 @@ export default function RegisterScreen() {
             <Ionicons name={avatarUri ? 'pencil-outline' : 'add-outline'} size={12} color="#fff" />
           </View>
         </TouchableOpacity>
-        <Text style={s.slogan}>{t('roleSelect.slogan')}</Text>
+        <Text style={s.avatarHint}>{t('register.avatarHint')}</Text>
         <View style={s.divider} />
 
         <Text style={s.heading}>{t('register.title')}</Text>
@@ -277,6 +284,7 @@ export default function RegisterScreen() {
             value={name}
             onChangeText={setName}
             autoCapitalize="characters"
+            autoCorrect={false}
           />
         </View>
 
@@ -413,7 +421,8 @@ export default function RegisterScreen() {
         </TouchableOpacity>
 
       </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   )
 }
 
@@ -429,11 +438,31 @@ const s = StyleSheet.create({
     paddingBottom:     48,
   },
 
-  back: {
-    position: 'absolute',
-    top:      52,
-    left:     20,
-    padding:  8,
+  topBar: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  backBtn: {
+    width:           36,
+    height:          36,
+    borderRadius:    18,
+    backgroundColor: '#fff',
+    alignItems:      'center',
+    justifyContent:  'center',
+    shadowColor:     '#1A2E5E',
+    shadowOffset:    { width: 0, height: 2 },
+    shadowOpacity:   0.08,
+    shadowRadius:    4,
+    elevation:       2,
+  },
+  formScroll: {
+    alignItems:        'center',
+    paddingHorizontal: 28,
+    paddingTop:        16,
+    paddingBottom:     48,
   },
 
   // ── Header / Avatar ──
@@ -458,6 +487,16 @@ const s = StyleSheet.create({
     opacity:       0.6,
     letterSpacing: 0.3,
     marginBottom:  12,
+  },
+  avatarHint: {
+    fontSize:      12,
+    fontStyle:     'italic',
+    color:         BRAND,
+    textAlign:     'center',
+    opacity:       0.75,
+    letterSpacing: 0.2,
+    marginBottom:  12,
+    paddingHorizontal: 12,
   },
   divider: {
     width:           '70%',

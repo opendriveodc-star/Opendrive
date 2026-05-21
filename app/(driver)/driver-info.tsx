@@ -122,15 +122,15 @@ export default function DriverInfoScreen() {
         newAvatarUrl = await uploadDriverAvatar(driverInfo.uid, avatarUri)
         setUploadingAvatar(false)
       }
-      const fields = {
+      const fields: Parameters<typeof updateDriverVehicleInfo>[1] = {
         name:          name.trim().toUpperCase(),
         vehicleType,
         transportModel,
         vehicleBrand:  vehicleBrand.trim().toUpperCase(),
         vehicleColor:  vehicleColor.trim().replace(/\b\w/g, c => c.toUpperCase()),
         licensePlate:  licensePlate.trim().toUpperCase(),
-        avatarUrl:     newAvatarUrl,
       }
+      if (newAvatarUrl != null) fields.avatarUrl = newAvatarUrl
       await updateDriverVehicleInfo(driverInfo.uid, fields)
       const updated: DriverInfo = { ...driverInfo, ...fields }
       await SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(updated))
@@ -145,17 +145,22 @@ export default function DriverInfoScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <SafeAreaView style={s.root} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+
+      {/* Top bar */}
+      <View style={s.topBar}>
+        <TouchableOpacity style={s.backBtn} onPress={() => router.back()} activeOpacity={0.7}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="chevron-back" size={22} color={BRAND} />
+        </TouchableOpacity>
+        <Text style={s.topTitle}>{t('driverInfo.title')}</Text>
+        <View style={{ width: 36 }} />
+      </View>
+
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-
-        {/* Back */}
-        <TouchableOpacity style={s.back} onPress={() => router.back()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={BRAND} />
-        </TouchableOpacity>
-
-        <Text style={s.heading}>{t('driverInfo.title')}</Text>
 
         {/* ── Avatar ── */}
         <TouchableOpacity style={s.avatarWrap} onPress={pickAvatar} activeOpacity={0.8}>
@@ -303,15 +308,36 @@ export default function DriverInfoScreen() {
         </TouchableOpacity>
 
       </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   )
 }
 
 const s = StyleSheet.create({
   root:   { flex: 1, backgroundColor: '#fff' },
-  scroll: { alignItems: 'center', paddingHorizontal: 28, paddingTop: 80, paddingBottom: 48 },
-  back:   { position: 'absolute', top: 40, left: 8, padding: 8 },
-  heading: { fontSize: 18, fontWeight: '700', color: BRAND, textAlign: 'center', marginBottom: 22, letterSpacing: 0.1, alignSelf: 'center' },
+  scroll: { alignItems: 'center', paddingHorizontal: 28, paddingTop: 16, paddingBottom: 48 },
+  topBar: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#fff',
+  },
+  backBtn: {
+    width:           36,
+    height:          36,
+    borderRadius:    18,
+    backgroundColor: '#fff',
+    alignItems:      'center',
+    justifyContent:  'center',
+    shadowColor:     '#1A2E5E',
+    shadowOffset:    { width: 0, height: 2 },
+    shadowOpacity:   0.08,
+    shadowRadius:    4,
+    elevation:       2,
+  },
+  topTitle: { fontSize: 16, fontWeight: '700', color: BRAND },
 
   sectionHeader: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 8, marginBottom: 12, marginTop: 6 },
   sectionAccent: { width: 3, height: 16, borderRadius: 2, backgroundColor: BRAND },

@@ -11,6 +11,7 @@ import {
   Horizon,
   FeeBumpTransaction,
   Transaction,
+  Memo,
 } from '@stellar/stellar-sdk'
 
 interface WorkerEnv {
@@ -100,8 +101,8 @@ async function updateFirestoreDriver(
   driverUid:    string,
   fields:       Record<string, unknown>,
 ): Promise<void> {
-  const fieldNames = Object.keys(fields).join(',')
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/drivers/${driverUid}?updateMask.fieldPaths=${fieldNames}`
+  const maskParams = Object.keys(fields).map(f => `updateMask.fieldPaths=${encodeURIComponent(f)}`).join('&')
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/drivers/${driverUid}?${maskParams}`
   const body: { fields: Record<string, unknown> } = { fields: {} }
   for (const [k, v] of Object.entries(fields)) {
     if (typeof v === 'number') body.fields[k] = { doubleValue: v }
@@ -217,7 +218,12 @@ export default {
           }))
 
         if (memo27bytes) {
-          txBuilder.addMemo({ type: 'hash', value: Buffer.from(memo27bytes, 'base64') } as never)
+          // Decode base64 → 27 bytes, pad to 32 bytes, convert to hex for Memo.hash
+          const raw    = Uint8Array.from(atob(memo27bytes), c => c.charCodeAt(0))
+          const padded = new Uint8Array(32)
+          padded.set(raw)
+          const memoHex = Array.from(padded).map(b => b.toString(16).padStart(2, '0')).join('')
+          txBuilder.addMemo(Memo.hash(memoHex))
         }
 
         if (rating === 1 || rating === 2) {

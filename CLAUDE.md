@@ -6,7 +6,7 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-19 (session 16)
+**Cập nhật lần cuối:** 2026-05-21 (session 22)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
@@ -18,20 +18,34 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
 - Customer home: 5-panel horizontal flow (Vehicle→Pickup→Dest→Book→Quotes) ✅
 - Driver flow: Stack navigation, online screen, settings, wallet, referral ✅
 - MapView: MapLibre GL JS + OpenFreeMap, mode picker + tracking ✅
-- **Session 16:** Avatar tài xế (Firebase Storage upload, picker, QuoteList image), trường màu xe, Blockchain explorer, Guide screen, toggle UX đổi chỗ ✅
+- **Session 16:** Avatar tài xế, Blockchain explorer, Guide screen ✅
+- **Session 17:** GlobalAlert singleton, back button chuẩn hóa, OTP auto-submit ✅
+- **Session 18:** Fix register bugs, responsive isSmall, scale animation, APK preview ✅
+- **Session 19:** Firestore REST API, FCM native setup, composite index. **FCM e2e verified ✅**
+- **Session 20:** RTDB polling thay WebRTC. Flow e2e: FCM ✅, vị trí tài xế ✅, status ✅, rating ✅
+- **Session 21:** **Flow e2e hoàn chỉnh 100%** ✅
+  - Hybrid WebRTC (5s timeout) → RTDB fallback
+  - Fix `encodeMemo`: thay `Buffer` (Node.js) bằng `Uint8Array`+`btoa` (Hermes-safe)
+  - Fix Worker stellar-record: `Buffer.from()` → `Uint8Array+atob`, thêm `Memo` import, `nodejs_compat`
+  - Fix `updateFirestoreDriver`: `updateMask.fieldPaths` dùng repeated params thay comma-separated
+  - First-trip bonus alert: "Chúc mừng chuyến đầu tiên + 10 ODC"
+- **Session 22:** UI polish driver screens + history/wallet hoạt động ✅
+  - `online.tsx`: card header redesign (icon + mã chuyến - khoảng cách), note field, cancel quote flow (xóa RTDB + filter card), geohash 9-cell query trong Worker
+  - `trip.tsx`: dest address, note, gọi điện từ chip SĐT, button flow (đến đón → hoàn thành), Maps label đúng phase, fitBounds khi map load, ODC penalty khi hủy chuyến
+  - `online.tsx` header ODC: `[wallet icon] ODC / {số}` — đồng nhất với `home.tsx`
+  - `history.tsx`: fetch Stellar Horizon payments của ví tài xế, filter memo 27 bytes → lịch sử chuyến + rating
+  - `wallet.tsx` (trong Settings): fetch **tất cả** ODC payments → lịch sử giao dịch đầy đủ (thưởng/phạt/phí), link sang history screen
+
+### Bàn giao Session 23 – Bắt đầu từ đây
+
+**Tình trạng:** Flow e2e hoàn chỉnh. UI driver screens đã polish. Wallet + History hoạt động với dữ liệu thật từ Stellar.
 
 ### Việc cần làm tiếp theo
 
-**Bước 6 – Test end-to-end**
-- [ ] Flow đặt xe: customer home → QuotesPanel → tracking
-- [ ] Nhận chuyến phía tài xế: online → báo giá
-- [ ] WebRTC P2P kết nối sau khi khách chọn tài xế
-- [ ] Hoàn thành chuyến + rating + ghi Stellar
-- [ ] Mining + đổi điểm
-
 **Bước 7 – Polish & Monetization**
+- [ ] Mining + đổi điểm ← **bắt đầu tại đây**
 - [ ] AdMob interstitial sau khi kết thúc chuyến
-- [ ] Test trên điện thoại thật
+- [ ] Build APK production (EAS reset 01/06/2026)
 - [ ] iOS build (chờ Apple Developer account)
 
 ---
@@ -42,7 +56,7 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
 - **Doanh thu:** Quảng cáo in-app
 - **Platform:** Android & iOS (React Native + Expo, EAS Build – KHÔNG dùng Expo Go)
 - **Ngôn ngữ:** Tiếng Việt & English (chuyển trong Settings, mặc định VI)
-- **Đặc điểm:** Đấu giá ngược (khách đặt → nhiều tài xế báo → khách chọn), WebRTC P2P, Stellar blockchain, ODC token, zero-cost stack
+- **Đặc điểm:** Đấu giá ngược (khách đặt → nhiều tài xế báo → khách chọn), Stellar blockchain, ODC token, zero-cost stack
 
 ---
 
@@ -95,13 +109,19 @@ db.collection("drivers")
 
 ```
 /trips/{tripId}/
-  info: { customerPhone, pickupGeohash, dropGeohash, vehicleType, status, createdAt }
+  info: { customerPhone, pickupGeohash, dropGeohash, pickupLat, pickupLng, dropLat, dropLng,
+          vehicleType, estimatedKm, pickupAddress, destAddress, note, status, createdAt }
   quotes/{driverUid}: { price, estimatedDistance, driverName, rating, vehicleInfo }
-  ice/{peerId}: { candidates, offer/answer }
+  location: { lat, lng, timestamp }          // tài xế ghi mỗi 3s khi đến đón
+  trip_status: 'picked_up' | 'completed'     // tài xế ghi
+  trip_info: { driverName, driverPhone, vehicleBrand, licensePlate }  // tài xế ghi 1 lần
+  rating: 1-5                                // khách ghi sau khi trip_status=completed
 /drivers_online/{uid}/lastSeen
 ```
 
 **Ai xóa tripId:** Khách hủy → khách xóa; hết 25s → client khách xóa; tài xế kết thúc → tài xế xóa. Worker 6 cron 3h sáng dọn >24h.
+
+**WebRTC đã bị xóa hoàn toàn** – không còn dùng react-native-webrtc, ICE, TURN, DataChannel. Toàn bộ in-trip messaging qua RTDB REST API polling 3s.
 
 ---
 
@@ -204,6 +224,14 @@ db.collection("drivers")
 - Nút tròn settings: `width/height: 36, borderRadius: 18, backgroundColor: BRAND`
 - Switch: `thumbColor` trắng khi ON, `trackColor` navy khi ON
 
+**Back button chuẩn (tất cả màn hình):**
+- Style: `width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff'`
+- Shadow: `shadowColor: BRAND, shadowOffset: {0,2}, shadowOpacity: 0.08, shadowRadius: 4, elevation: 2`
+- Icon: `<Ionicons name="chevron-back" size={22} color={BRAND} />`
+- `hitSlop: { top: 10, bottom: 10, left: 10, right: 10 }`
+- Layout: nằm trong `topBar` row (`flexDirection: 'row', alignItems: 'center'`), KHÔNG dùng `position: absolute`
+- Tất cả màn hình dùng `SafeAreaView edges={['top']}` → topBar → `KeyboardAvoidingView` → `ScrollView`
+
 ### MapView (`src/components/MapView.tsx`)
 - **Engine:** MapLibre GL JS (WebView, không phải native module)
 - **Style:** `https://tiles.openfreemap.org/styles/positron`
@@ -245,6 +273,20 @@ db.collection("drivers")
 - **Mỗi lần mở app:** `home.tsx` reset status → `'offline'` – tài xế phải bấm Sẵn sàng thủ công
 - `_layout.tsx` filter `console.warn` có `@firebase/firestore` – ẩn WebChannel noise
 - `auth/network-request-failed` = lỗi mạng, không phải code bug
+- **Firestore WRITE dùng REST API** (`firestoreRest.patch` trong `firebase.ts`), KHÔNG dùng `updateDoc` SDK – WebChannel/gRPC fail silent trên Android 4G
+- Firestore READ (getDoc) vẫn dùng SDK vì chỉ đọc 1 lần, không cần persistent connection
+
+### FCM & Push Notifications
+- `google-services.json` phải có trong **`android/app/`** (không phải root) cho local debug build
+- `android/build.gradle`: cần `classpath('com.google.gms:google-services:4.4.2')`
+- `android/app/build.gradle`: cần `apply plugin: "com.google.gms.google-services"`
+- `google-services.json` tại root có `package_name: com.kgt.opendrive` – đã thêm `com.opendrive.app` vào client array
+- FCM token đăng ký ở `home.tsx:registerFcmToken()` → `updateDriverFcmToken()` → Firestore
+
+### Firestore Indexes
+- `firestore.indexes.json` đã tạo composite index: `status(ASC) + vehicleType(ASC) + random_id(ASC) + geohash(ASC)`
+- Index này bắt buộc cho Worker query tìm tài xế (5 filters: 4 equality + geohash range)
+- Khi thêm xe mới hoặc thay đổi query: cập nhật `firestore.indexes.json` → `npx firebase deploy --only firestore:indexes`
 
 ### Xe & Firestore Rules
 - Mỗi khi thêm xe mới: cập nhật `vehicles.ts` + regex `vehicleType` trong `firestore.rules` + **redeploy**
@@ -261,10 +303,47 @@ db.collection("drivers")
 - `app/blockchain.tsx`: Stellar Transaction wallet explorer – Horizon API pagination, decode 27-byte memo lấy rating, link ra stellar.expert; mainnet/testnet tự động theo `STELLAR.NETWORK`
 - `app/guide.tsx`: Hướng dẫn sử dụng 3 tab (Tài xế/Khách/Người đào), content hardcoded vi/en theo `i18n.language`, stepper timeline UI
 
+### GlobalAlert (`src/components/GlobalAlert.tsx`)
+- **Singleton pattern:** `let _set: ((s: State) => void) | null = null` – set bởi component, gọi từ mọi nơi
+- `showAlert(title, message?, buttons?)` – Modal fade overlay, brand colors
+- `showActionSheet(title, options[])` – bottom sheet slide, mỗi option có `{ label, icon?, style?, onPress }`, icon là Ionicons name
+- **Import:** `import { showAlert, showActionSheet } from '../../src/components/GlobalAlert'`
+- Mount tại `app/_layout.tsx` như sibling của `<Stack>` bên trong Fragment
+- **KHÔNG dùng `Alert` từ react-native** – thay tất cả bằng `showAlert`/`showActionSheet`
+
+### Avatar hint (`app/(auth)/register.tsx`)
+- Dòng bên dưới avatar dùng key `register.avatarHint` (không dùng `roleSelect.slogan`)
+- Style riêng `s.avatarHint`: fontSize 12, italic, opacity 0.75
+
+### OTP Screen (`app/(auth)/phone.tsx`)
+- Auto-submit khi nhập đủ 6 chữ số: `onChangeText` gọi `verifyOTPWithValue(text)` khi `text.length === 6`
+- Nút Xác nhận disabled khi `otp.length < 6` – tránh gọi API với OTP rỗng
+- Dùng `verifyOTPWithValue(value: string)` riêng (không dùng state `otp`) để tránh stale closure
+
 ### Wallet Balance Card
 - Số tiền: `balance.toFixed(2)` (không kèm đơn vị)
 - Chữ "ODC": `<Text>` riêng bên dưới, `fontSize: 22, fontWeight: '700'`
 - Label "Số dư": `fontSize: 16, opacity: 0.7`
+
+### Android rendering
+- `settingsBtn` (và các nút tròn tương tự trong card): KHÔNG dùng `elevation` + `overflow: 'hidden'` để tránh artifact đường trắng và ripple vuông
+- Card `headerCard`: `elevation: 0` trên Android, dùng `borderWidth: 1` thay thế
+- Responsive: `const isSmall = SCREEN_H < 750` để điều chỉnh size/spacing trên màn nhỏ
+- Button animation: dùng `scaleAnim` (scale bounce 0.88→1) thay spin arc — tránh conditional render gây jank
+- Map pin nhảy lúc đầu (online screen): known issue, chưa fix — GPS load sau khi map render
+
+### In-trip Communication (Hybrid WebRTC + RTDB)
+- **Hybrid:** WebRTC DataChannel thử trước (timeout 5s), nếu không kết nối → RTDB polling
+- **WebRTC thành công** trong production nhờ TURN relay (Cloudflare Realtime, Worker 5) — TURN bridge mọi NAT type, không cần IPv6. Đây là path chính.
+- **RTDB fallback** chỉ khi TURN fail hoặc test với emulator (emulator có network stack ảo hóa không ổn định với TURN)
+- Tài xế ghi `trips/{tripId}/location` mỗi 3s (chỉ khi chưa đón khách)
+- Tài xế ghi `trips/{tripId}/trip_info` một lần khi vào trip screen
+- Tài xế ghi `trips/{tripId}/trip_status` khi đón khách (`picked_up`) và kết thúc (`completed`)
+- Khách poll `location` + `trip_status` mỗi 3s trong `tracking.tsx`
+- Khách ghi `trips/{tripId}/rating` (1-5) trong `rating.tsx`
+- Tài xế poll `rating` mỗi 2s sau khi gửi `completed`, timeout 30s → default rating 3
+- `decodeGeohash()` có trong `location.ts` – dùng khi cần convert geohash → tọa độ
+- Nút Maps trong `trip.tsx` dùng `pickupLat/pickupLng` từ `PendingTrip` (tọa độ thật, không phải geohash)
 
 ### Quy tắc bất biến
 - **KHÔNG dùng Expo Go** – EAS Dev Client

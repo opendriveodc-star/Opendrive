@@ -5,12 +5,12 @@ import { Stack } from 'expo-router'
 export default function DriverLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="home" />
+      <Stack.Screen name="home" options={{ animation: 'none' }} />
       <Stack.Screen name="settings" />
       <Stack.Screen name="history" />
       <Stack.Screen name="wallet" />
       <Stack.Screen name="referral" />
-      <Stack.Screen name="online" />
+      <Stack.Screen name="online" options={{ animation: 'none' }} />
       <Stack.Screen name="quote-config" />
       <Stack.Screen name="driver-info" />
       <Stack.Screen name="bidding" />

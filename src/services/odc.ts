@@ -45,7 +45,7 @@ export function encodeMemo(
   dropGeohash:   string,  // 8 ký tự
   rating:        RatingValue,
 ): string {
-  const buf = Buffer.alloc(27)
+  const buf = new Uint8Array(27)
 
   // BCD encode SĐT (10 chữ số → 5 bytes)
   const encodeBCD = (phone: string, offset: number) => {
@@ -59,15 +59,20 @@ export function encodeMemo(
   encodeBCD(customerPhone, 5)
 
   // Geohash 8 ký tự ASCII
-  const pickupBytes = Buffer.from(pickupGeohash.slice(0, 8).padEnd(8, '0'), 'ascii')
-  const dropBytes   = Buffer.from(dropGeohash.slice(0, 8).padEnd(8, '0'),   'ascii')
-  pickupBytes.copy(buf, 10)
-  dropBytes.copy(buf, 18)
+  const pickup = pickupGeohash.slice(0, 8).padEnd(8, '0')
+  const drop   = dropGeohash.slice(0, 8).padEnd(8, '0')
+  for (let i = 0; i < 8; i++) {
+    buf[10 + i] = pickup.charCodeAt(i)
+    buf[18 + i] = drop.charCodeAt(i)
+  }
 
   // Rating 1 byte
   buf[26] = rating
 
-  return buf.toString('base64')
+  // base64 encode không dùng Buffer
+  let binary = ''
+  for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i])
+  return btoa(binary)
 }
 
 // Lấy số dư ODC từ Stellar Horizon

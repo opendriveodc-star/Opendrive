@@ -1,25 +1,28 @@
 // app/(driver)/online.tsx
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   View, Text, FlatList, TouchableOpacity, TextInput, Switch,
   StyleSheet, ActivityIndicator, KeyboardAvoidingView,
-  Platform, Animated, Dimensions, StatusBar,
+  Platform, Animated, Easing, Dimensions, StatusBar, PanResponder,
 } from 'react-native'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import * as SecureStore from 'expo-secure-store'
 import * as Notifications from 'expo-notifications'
-import { router } from 'expo-router'
+import { router, useLocalSearchParams, useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { rtdb } from '../../src/services/firebase'
-import { updateDriverStatus } from '../../src/services/firestore'
-import { getCurrentLocation } from '../../src/services/location'
+import * as ExpoLocation from 'expo-location'
+import { updateDriverStatus, updateDriverLocation } from '../../src/services/firestore'
+import { getCurrentLocation, distanceKm, geohashForQuery } from '../../src/services/location'
+import { LOCATION } from '../../src/constants'
 import { hasEnoughODC, getODCBalance } from '../../src/services/odc'
 import { maskPhone } from '../../src/utils/format'
 import { savePendingTrip } from '../../src/utils/storage'
+import { prefetchTurnCredentials } from '../../src/services/webrtc'
 import MapView from '../../src/components/MapView'
 import type { MapViewHandle } from '../../src/components/MapView'
 import {
@@ -29,8 +32,9 @@ import {
 } from '../../src/types'
 
 const { height: SCREEN_H } = Dimensions.get('window')
-const SHEET_HEIGHT  = Math.round(SCREEN_H * 0.56)
-const COLLAPSED_Y   = SHEET_HEIGHT - 72   // chỉ handle bar lộ ra
+const SHEET_HEIGHT      = Math.round(SCREEN_H * 0.44) + 7
+const COLLAPSED_Y       = SHEET_HEIGHT - 60   // ngang vạch phân cách header/list
+const VISIBLE_COLLAPSED = SHEET_HEIGHT - COLLAPSED_Y  // = 60
 const BRAND         = '#1A2E5E'
 const BRAND_LIGHT   = '#E8EDF6'
 
@@ -57,26 +61,79 @@ export default function OnlineScreen() {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
   const mapRef = useRef<MapViewHandle>(null)
+  const { expandTripId } = useLocalSearchParams<{ expandTripId?: string }>()
+  const pendingExpandRef = useRef<string | null>(expandTripId ?? null)
 
   const [driverName,   setDriverName]   = useState('')
   const [driverRating, setDriverRating] = useState(0)
   const [odcBalance,   setOdcBalance]   = useState(0)
-  const [mapLat,       setMapLat]       = useState(10.7769)
-  const [mapLng,       setMapLng]       = useState(106.7009)
+  const [mapInit,      setMapInit]      = useState<{ lat: number; lng: number } | null>(null)
   const [trips,        setTrips]        = useState<TripCard[]>([])
   const [autoSettings, setAutoSettings] = useState<AutoQuoteSettings>(DEFAULT_AUTO_QUOTE_SETTINGS)
   const [sheetOpen,    setSheetOpen]    = useState(false)
+  const [quotingTripId, setQuotingTripId] = useState<string | null>(null)
+  const [quotingPrice,  setQuotingPrice]  = useState('')
 
   const driverInfoRef   = useRef<DriverInfo | null>(null)
   const odcBalanceRef   = useRef(0)
   const autoSettingsRef = useRef<AutoQuoteSettings>(DEFAULT_AUTO_QUOTE_SETTINGS)
-  const mapInitRef      = useRef(false)
+  const lastPosRef          = useRef<{ lat: number; lng: number } | null>(null)
+  const activeMarkerTripRef = useRef<string | null>(null)
+  const processingTrips = useRef<Set<string>>(new Set())
+  const sheetOpenRef    = useRef(false)
 
-  // Sheet animation
-  const sheetAnim = useRef(new Animated.Value(COLLAPSED_Y)).current
+  // Sheet animation – bắt đầu ngoài màn hình, trượt vào sau mount
+  const sheetAnim = useRef(new Animated.Value(SHEET_HEIGHT)).current
 
-  useEffect(() => { odcBalanceRef.current   = odcBalance   }, [odcBalance])
+  useEffect(() => { odcBalanceRef.current = odcBalance   }, [odcBalance])
   useEffect(() => { autoSettingsRef.current = autoSettings }, [autoSettings])
+  useEffect(() => { sheetOpenRef.current = sheetOpen }, [sheetOpen])
+
+  // Reload settings mỗi khi quay lại màn hình (từ Settings)
+  useFocusEffect(
+    React.useCallback(() => {
+      AsyncStorage.getItem(AsyncStorageKey.AUTO_QUOTE_SETTINGS).then(raw => {
+        if (!raw) return
+        const s = { ...JSON.parse(raw) as AutoQuoteSettings, rainModeEnabled: false }
+        setAutoSettings(s)
+        autoSettingsRef.current = s
+      })
+    }, [])
+  )
+
+  // PanResponder cho handle – kéo lên/xuống hoặc tap để toggle
+  const handlePan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder:  (_, gs) => Math.abs(gs.dy) > 6,
+      onPanResponderGrant: () => { sheetAnim.stopAnimation() },
+      onPanResponderMove: (_, gs) => {
+        const base = sheetOpenRef.current ? 0 : COLLAPSED_Y
+        const next = Math.max(0, Math.min(COLLAPSED_Y, base + gs.dy))
+        sheetAnim.setValue(next)
+      },
+      onPanResponderRelease: (_, gs) => {
+        if (Math.abs(gs.dy) < 6 && Math.abs(gs.dx) < 6) {
+          // tap
+          sheetOpenRef.current ? closeSheet() : openSheet()
+        } else if (gs.dy < -20 || gs.vy < -0.3) {
+          openSheet()
+        } else {
+          closeSheet()
+        }
+      },
+    })
+  ).current
+
+  // Trượt panel vào sau khi mount xong
+  useEffect(() => {
+    Animated.timing(sheetAnim, {
+      toValue: COLLAPSED_Y,
+      duration: 320,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
+    }).start()
+  }, [])
 
   // Auto-expand sheet khi có chuyến mới
   useEffect(() => {
@@ -89,21 +146,23 @@ export default function OnlineScreen() {
 
   function openSheet() {
     setSheetOpen(true)
-    Animated.spring(sheetAnim, {
+    mapRef.current?.setPadding(insets.top + 82, SHEET_HEIGHT)
+    Animated.timing(sheetAnim, {
       toValue: 0,
+      duration: 280,
       useNativeDriver: true,
-      damping: 20,
-      stiffness: 180,
+      easing: Easing.out(Easing.cubic),
     }).start()
   }
 
   function closeSheet() {
     setSheetOpen(false)
-    Animated.spring(sheetAnim, {
+    mapRef.current?.setPadding(0, VISIBLE_COLLAPSED + 8)
+    Animated.timing(sheetAnim, {
       toValue: COLLAPSED_Y,
+      duration: 250,
       useNativeDriver: true,
-      damping: 20,
-      stiffness: 180,
+      easing: Easing.out(Easing.cubic),
     }).start()
   }
 
@@ -122,30 +181,74 @@ export default function OnlineScreen() {
     setDriverName(info.name)
     setDriverRating(info.rating)
 
+    prefetchTurnCredentials()
 
-    const balance = await getODCBalance(info.stellarWallet)
+    const balance = await getODCBalance(info.stellarWallet).catch(() => 0)
     setOdcBalance(balance)
 
     const settingsRaw = await AsyncStorage.getItem(AsyncStorageKey.AUTO_QUOTE_SETTINGS)
     if (settingsRaw) {
-      const s = JSON.parse(settingsRaw) as AutoQuoteSettings
+      // rainModeEnabled reset về false mỗi lần mở app (chỉ autoQuoteEnabled mới lưu)
+      const s = { ...JSON.parse(settingsRaw) as AutoQuoteSettings, rainModeEnabled: false }
       setAutoSettings(s)
       autoSettingsRef.current = s
+      await AsyncStorage.setItem(AsyncStorageKey.AUTO_QUOTE_SETTINGS, JSON.stringify(s))
     }
+
+    // Đảm bảo Firestore luôn sync status=ready khi vào màn này
+    updateDriverStatus(info.uid, 'ready').catch(e => console.error('[online] updateDriverStatus failed:', JSON.stringify(e)))
 
     try {
       const { lat, lng } = await getCurrentLocation()
-      setMapLat(lat)
-      setMapLng(lng)
-      mapInitRef.current = true
+      setMapInit({ lat, lng })
+      lastPosRef.current = { lat, lng }
+      updateDriverLocation(info.uid, geohashForQuery(lat, lng)).catch(e => console.error('[online] updateDriverLocation failed:', JSON.stringify(e)))
     } catch {}
+
+    if (pendingExpandRef.current) {
+      const tid = pendingExpandRef.current
+      pendingExpandRef.current = null
+      addTrip(tid, true)
+    }
   }
 
+  // ── Cập nhật vị trí – watchPositionAsync (GPS listener native, không cần mạng) ──
   useEffect(() => {
-    if (mapLat !== 10.7769 && mapInitRef.current) {
-      mapRef.current?.updateDriverMarker(mapLat, mapLng)
+    let mounted = true
+    let locationSub: ExpoLocation.LocationSubscription | null = null
+
+    // GPS listener: callback mỗi khi di chuyển ≥3m hoặc mỗi 2s
+    ExpoLocation.watchPositionAsync(
+      { accuracy: ExpoLocation.Accuracy.High, timeInterval: 2000 },
+      ({ coords }) => {
+        if (!mounted) return
+        const { latitude: lat, longitude: lng } = coords
+        mapRef.current?.updateDriverMarker(lat, lng)
+        lastPosRef.current = { lat, lng }
+      },
+    ).then(sub => {
+      if (!mounted) sub.remove()
+      else locationSub = sub
+    }).catch(() => {})
+
+    // Firestore geohash: 60s/lần, chỉ khi di chuyển >1km so với lần ghi trước
+    const lastFirestorePos = { lat: 0, lng: 0 }
+    const firestoreInterval = setInterval(() => {
+      const drv  = driverInfoRef.current
+      const last = lastPosRef.current
+      if (!drv || !last) return
+      if (lastFirestorePos.lat !== 0 && distanceKm(lastFirestorePos.lat, lastFirestorePos.lng, last.lat, last.lng) < 1) return
+      lastFirestorePos.lat = last.lat
+      lastFirestorePos.lng = last.lng
+      updateDriverLocation(drv.uid, geohashForQuery(last.lat, last.lng)).catch(() => {})
+    }, LOCATION.UPDATE_INTERVAL_MS)
+
+    return () => {
+      mounted = false
+      locationSub?.remove()
+      clearInterval(firestoreInterval)
     }
-  }, [mapLat, mapLng])
+  }, [])
 
   // ── FCM listeners ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -167,18 +270,21 @@ export default function OnlineScreen() {
   function onNotifResponse(r: Notifications.NotificationResponse) {
     const data = r.notification.request.content.data as Record<string, string> | undefined
     if (!data) return
+    if (data.type === 'new_trip'      && data.tripId) addTrip(data.tripId, true)
     if (data.type === 'trip_selected' && data.tripId) handleTripSelected(data.tripId)
   }
 
   // ── Thêm chuyến mới ──────────────────────────────────────────────────────────
-  const addTrip = useCallback(async (tripId: string) => {
-    setTrips(prev => {
-      if (prev.find(t => t.tripId === tripId)) return prev
-      return [...prev, { tripId, info: null, loading: true, cardState: 'idle', priceInput: '', autoQuoted: false }]
-    })
+  const addTrip = useCallback(async (tripId: string, autoExpand = false) => {
+    if (processingTrips.current.has(tripId)) return
+    processingTrips.current.add(tripId)
+    setTrips(prev => [...prev, { tripId, info: null, loading: true, cardState: 'idle', priceInput: '', autoQuoted: false }])
     try {
       const info = await rtdb.get<TripRealtimeInfo>(`trips/${tripId}/info`)
+      console.log('[addTrip] tripId:', tripId, 'info:', JSON.stringify(info))
       if (!info || info.status !== 'waiting') {
+        console.log('[addTrip] removed – info null or status:', info?.status)
+        processingTrips.current.delete(tripId)
         setTrips(prev => prev.filter(t => t.tripId !== tripId))
         return
       }
@@ -190,14 +296,17 @@ export default function OnlineScreen() {
         if (hasEnoughODC(autoPrice, bal)) {
           await submitQuote(tripId, autoPrice, drv)
           setTrips(prev => prev.map(t => t.tripId === tripId
-            ? { ...t, info, loading: false, cardState: 'quoted', priceInput: String(autoPrice), autoQuoted: true }
+            ? { ...t, info, loading: false, cardState: 'quoted', priceInput: String(autoPrice).replace(/\B(?=(\d{3})+(?!\d))/g, '.'), autoQuoted: true }
             : t,
           ))
           return
         }
       }
-      setTrips(prev => prev.map(t => t.tripId === tripId ? { ...t, info, loading: false } : t))
-    } catch {
+      const initialState: CardState = autoExpand ? 'expanded' : 'idle'
+      setTrips(prev => prev.map(t => t.tripId === tripId ? { ...t, info, loading: false, cardState: initialState } : t))
+    } catch (e) {
+      console.log('[addTrip] catch error:', String(e))
+      processingTrips.current.delete(tripId)
       setTrips(prev => prev.filter(t => t.tripId !== tripId))
     }
   }, [])
@@ -219,8 +328,15 @@ export default function OnlineScreen() {
     await rtdb.set(`trips/${tripId}/quotes/${drv.uid}`, quote)
   }
 
+  async function handleFloatingQuote() {
+    if (!quotingTripId) return
+    await handleManualQuote(quotingTripId, quotingPrice)
+    setQuotingTripId(null)
+    setQuotingPrice('')
+  }
+
   async function handleManualQuote(tripId: string, priceStr: string) {
-    const price = parseInt(priceStr, 10)
+    const price = parseInt(priceStr.replace(/\./g, ''), 10)
     if (!price || price <= 0) { showAlert(t('common.error'), 'Vui lòng nhập giá hợp lệ'); return }
     if (!hasEnoughODC(price, odcBalanceRef.current)) {
       showAlert(t('common.error'), t('error.insufficientODC'))
@@ -230,35 +346,54 @@ export default function OnlineScreen() {
     if (!drv) return
     try {
       await submitQuote(tripId, price, drv)
-      setTrips(prev => prev.map(t => t.tripId === tripId ? { ...t, cardState: 'quoted' } : t))
-    } catch {
-      showAlert(t('common.error'), t('error.serverError'))
-    }
-  }
-
-  async function handleCancelQuote(tripId: string) {
-    const drv = driverInfoRef.current
-    if (!drv) return
-    try {
-      await rtdb.delete(`trips/${tripId}/quotes/${drv.uid}`)
-      setTrips(prev => prev.map(t =>
-        t.tripId === tripId ? { ...t, cardState: 'idle', priceInput: '' } : t,
+      setTrips(prev => prev.map(t => t.tripId === tripId
+        ? { ...t, cardState: 'quoted', priceInput: priceStr }
+        : t,
       ))
     } catch {
       showAlert(t('common.error'), t('error.serverError'))
     }
   }
 
+  function handleCancelQuote(tripId: string) {
+    showAlert(
+      t('online.cancelQuoteConfirmTitle'),
+      t('online.cancelQuoteConfirmMsg'),
+      [
+        {
+          text: t('common.confirm'),
+          onPress: async () => {
+            const drv = driverInfoRef.current
+            if (!drv) return
+            try {
+              await rtdb.delete(`trips/${tripId}/quotes/${drv.uid}`)
+              setTrips(prev => prev.filter(t => t.tripId !== tripId))
+              if (activeMarkerTripRef.current === tripId) {
+                mapRef.current?.hideCustomerMarker()
+                activeMarkerTripRef.current = null
+              }
+            } catch {
+              showAlert(t('common.error'), t('error.serverError'))
+            }
+          },
+        },
+        { text: t('common.cancel') },
+      ],
+    )
+  }
+
   // ── Được khách chọn ──────────────────────────────────────────────────────────
   async function handleTripSelected(tripId: string) {
     const drv = driverInfoRef.current
-    if (!drv) return
+    if (!drv) { console.log('[selected] no driverInfo'); return }
     try {
+      console.log('[selected] fetching tripInfo + quote for', tripId, drv.uid)
       const [tripInfo, quote] = await Promise.all([
         rtdb.get<TripRealtimeInfo>(`trips/${tripId}/info`),
         rtdb.get<TripQuote>(`trips/${tripId}/quotes/${drv.uid}`),
       ])
-      if (!tripInfo || !quote) return
+      console.log('[selected] tripInfo:', !!tripInfo, 'quote:', !!quote, quote?.quotedPrice)
+      if (!tripInfo || !quote) { console.log('[selected] missing data, abort'); return }
       const pending: PendingTrip = {
         tripId,
         driverUid:     drv.uid,
@@ -266,17 +401,23 @@ export default function OnlineScreen() {
         startedAt:     new Date().toISOString(),
         pickupGeohash: tripInfo.pickupGeohash,
         dropGeohash:   tripInfo.dropGeohash,
+        pickupLat:     tripInfo.pickupLat ?? 0,
+        pickupLng:     tripInfo.pickupLng ?? 0,
         customerPhone: tripInfo.customerPhone,
         rating:        null,
       }
+      console.log('[selected] savePendingTrip...')
       await savePendingTrip(pending)
+      console.log('[selected] updateDriverStatus busy...')
       await updateDriverStatus(drv.uid, 'busy')
       await SecureStore.setItemAsync(
         SecureStoreKey.DRIVER_INFO,
         JSON.stringify({ ...drv, status: 'busy' as DriverStatus }),
       )
+      console.log('[selected] navigate trip...')
       router.replace('/(driver)/trip')
-    } catch {
+    } catch (e) {
+      console.log('[selected] ERROR:', String(e))
       showAlert(t('common.error'), t('error.serverError'))
     }
   }
@@ -291,10 +432,18 @@ export default function OnlineScreen() {
         SecureStoreKey.DRIVER_INFO,
         JSON.stringify({ ...drv, status: 'offline' as DriverStatus }),
       )
+      await new Promise(r => setTimeout(r, 400))
       router.replace('/(driver)/home')
     } catch {
       showAlert(t('common.error'), t('error.serverError'))
     }
+  }
+
+  async function toggleAutoQuote() {
+    const updated = { ...autoSettings, autoQuoteEnabled: !autoSettings.autoQuoteEnabled }
+    setAutoSettings(updated)
+    autoSettingsRef.current = updated
+    await AsyncStorage.setItem(AsyncStorageKey.AUTO_QUOTE_SETTINGS, JSON.stringify(updated))
   }
 
   async function toggleRainMode() {
@@ -307,95 +456,79 @@ export default function OnlineScreen() {
   // ── Render card chuyến ───────────────────────────────────────────────────────
   function renderCard({ item }: { item: TripCard }) {
     if (item.loading || !item.info) {
-      return (
-        <View style={styles.card}>
-          <ActivityIndicator color={BRAND} size="small" />
-        </View>
-      )
+      return <View style={styles.card}><ActivityIndicator color={BRAND} size="small" /></View>
     }
-    const { info } = item
-    const vehicleLabel: Record<string, string> = {
-      motorbike: t('vehicle.motorbike'), car4: t('vehicle.car4'), car7: t('vehicle.car7'),
-      pickup: t('vehicle.pickup'), truck: t('vehicle.truck'),
+    const { info }   = item
+    const shortId    = item.tripId.slice(0, 8).toUpperCase()
+    const isQuoted = item.cardState === 'quoted'
+
+    function panToPickup() {
+      if (!info.pickupLat || !info.pickupLng) return
+      activeMarkerTripRef.current = item.tripId
+      mapRef.current?.showCustomerMarker(info.pickupLat, info.pickupLng)
+      const drv = lastPosRef.current
+      if (drv) {
+        mapRef.current?.fitBoundsToMarkers(info.pickupLat, info.pickupLng, drv.lat, drv.lng)
+      } else {
+        mapRef.current?.panTo(info.pickupLat, info.pickupLng)
+      }
     }
+
     return (
-      <View style={styles.card}>
-        <View style={styles.cardTop}>
-          <View style={styles.cardIconWrap}>
-            <Ionicons name="navigate-outline" size={18} color={BRAND} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.cardTitle}>
-              {vehicleLabel[info.vehicleType] ?? info.vehicleType}
-              {'  '}
-              <Text style={styles.cardKm}>{info.estimatedKm?.toFixed(1) ?? '?'} km</Text>
+      <TouchableOpacity style={styles.card} onPress={panToPickup} activeOpacity={0.88}>
+        {/* Hàng 1: mã chuyến - khoảng cách + giá */}
+        <View style={styles.cardIdRow}>
+          <View style={styles.cardIdLeft}>
+            <Ionicons name="document-text-outline" size={12} color={BRAND} />
+            <Text style={styles.cardId} numberOfLines={1}>
+              {shortId}
+              <Text style={styles.cardIdLabel}> - </Text>
+              {info.estimatedKm?.toFixed(1) ?? '?'} km
             </Text>
-            <Text style={styles.cardSub}>{t('online.customer')}: {maskPhone(info.customerPhone)}</Text>
           </View>
-          {item.cardState === 'idle' && (
+          {isQuoted && (
+            <View style={styles.quotedInline}>
+              <Ionicons name="checkmark-circle" size={13} color="#15803D" />
+              <Text style={styles.quotedPriceBold}> {item.priceInput}đ</Text>
+            </View>
+          )}
+        </View>
+        {/* Hàng 2: địa chỉ (cột trái) + nút (phải, căn dưới) */}
+        <View style={styles.cardBottomRow}>
+          <View style={{ flex: 1 }}>
+            {!!info.pickupAddress && (
+              <View style={[styles.cardAddrRow, { marginTop: 2 }]}>
+                <Ionicons name="location-sharp" size={12} color={BRAND} />
+                <Text style={styles.cardAddr} numberOfLines={1}> {info.pickupAddress}</Text>
+              </View>
+            )}
+            {!!info.destAddress && (
+              <View style={[styles.cardAddrRow, { marginTop: 2 }]}>
+                <Ionicons name="location-sharp" size={12} color="#94A3B8" />
+                <Text style={styles.cardAddr} numberOfLines={1}> {info.destAddress}</Text>
+              </View>
+            )}
+            {!!info.note && (
+              <View style={[styles.cardAddrRow, { marginTop: 3 }]}>
+                <Ionicons name="chatbubble-ellipses-outline" size={12} color="#F59E0B" />
+                <Text style={styles.noteContent} numberOfLines={2}> <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Ghi chú:</Text> {info.note}</Text>
+              </View>
+            )}
+          </View>
+          {isQuoted ? (
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => handleCancelQuote(item.tripId)}>
+              <Text style={styles.cancelBtnText}>{t('online.cancelQuote')}</Text>
+            </TouchableOpacity>
+          ) : (
             <TouchableOpacity
               style={styles.quoteBtn}
-              onPress={() => setTrips(prev => prev.map(t =>
-                t.tripId === item.tripId ? { ...t, cardState: 'expanded' } : t,
-              ))}
+              onPress={() => { setQuotingTripId(item.tripId); setQuotingPrice('') }}
             >
               <Text style={styles.quoteBtnText}>{t('online.quote')}</Text>
             </TouchableOpacity>
           )}
-          {item.cardState === 'quoted' && (
-            <View style={styles.quotedBadge}>
-              <Ionicons name="checkmark-circle" size={14} color="#15803D" />
-              <Text style={styles.quotedBadgeText}>{t('online.quoteSent')}</Text>
-            </View>
-          )}
         </View>
-
-        {item.cardState === 'expanded' && (
-          <View style={styles.expandedArea}>
-            <TextInput
-              style={styles.priceInput}
-              placeholder={t('online.pricePlaceholder')}
-              placeholderTextColor="#9CA3AF"
-              keyboardType="numeric"
-              value={item.priceInput}
-              onChangeText={v => setTrips(prev => prev.map(t =>
-                t.tripId === item.tripId ? { ...t, priceInput: v } : t,
-              ))}
-            />
-            <View style={styles.expandedBtns}>
-              <TouchableOpacity
-                style={styles.sendBtn}
-                onPress={() => handleManualQuote(item.tripId, item.priceInput)}
-              >
-                <Text style={styles.sendBtnText}>{t('online.sendQuote')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.closeBtn}
-                onPress={() => setTrips(prev => prev.map(t =>
-                  t.tripId === item.tripId ? { ...t, cardState: 'idle' } : t,
-                ))}
-              >
-                <Text style={styles.closeBtnText}>{t('online.close')}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {item.cardState === 'quoted' && (
-          <View style={styles.quotedRow}>
-            <Text style={styles.quotedText}>
-              {parseInt(item.priceInput || '0').toLocaleString('vi-VN')}đ
-              {item.autoQuoted ? `  ${t('online.autoTag')}` : ''}
-            </Text>
-            <TouchableOpacity
-              style={styles.cancelBtn}
-              onPress={() => handleCancelQuote(item.tripId)}
-            >
-              <Text style={styles.cancelBtnText}>{t('online.cancelQuote')}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
+      </TouchableOpacity>
     )
   }
 
@@ -405,11 +538,17 @@ export default function OnlineScreen() {
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <StatusBar translucent barStyle="dark-content" backgroundColor="transparent" />
-
-      {/* Bản đồ full màn hình */}
+      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+      {/* Bản đồ full màn hình – chỉ render 1 lần khi có GPS, update sau qua injectJavaScript */}
       <View style={StyleSheet.absoluteFill}>
-        <MapView ref={mapRef} lat={mapLat} lng={mapLng} />
+        {mapInit && (
+          <MapView
+            ref={mapRef}
+            lat={mapInit.lat}
+            lng={mapInit.lng}
+            onMapReady={() => mapRef.current?.setBottomPadding(VISIBLE_COLLAPSED + 8)}
+          />
+        )}
       </View>
 
       {/* Header overlay */}
@@ -431,8 +570,11 @@ export default function OnlineScreen() {
           {/* ODC balance + settings */}
           <View style={styles.headerRight}>
             <View style={styles.balanceStack}>
-              <Ionicons name="wallet-outline" size={18} color={BRAND} />
-              <Text style={styles.balanceText}>{odcBalance % 1 === 0 ? odcBalance : odcBalance.toFixed(2)} ODC</Text>
+              <View style={styles.balanceLabelRow}>
+                <Ionicons name="wallet-outline" size={15} color={BRAND} />
+                <Text style={styles.balanceODC}>ODC</Text>
+              </View>
+              <Text style={styles.balanceText}>{odcBalance % 1 === 0 ? odcBalance : odcBalance.toFixed(2)}</Text>
             </View>
             <View style={styles.headerDivider} />
             <TouchableOpacity
@@ -446,19 +588,65 @@ export default function OnlineScreen() {
         </View>
       </SafeAreaView>
 
+      {/* Floating báo giá – giữa vùng bản đồ trống */}
+      {quotingTripId && (
+        <View
+          style={[
+            styles.quotingOverlay,
+            { top: Math.round((insets.top + 82 + SCREEN_H - SHEET_HEIGHT - insets.bottom - 200) / 2) },
+          ]}
+          pointerEvents="box-none"
+        >
+          <View style={styles.quotingCard}>
+            <Text style={styles.quotingTitle}>{t('online.quote')}</Text>
+            <View style={styles.quotingInputRow}>
+              <TextInput
+                style={styles.quotingInput}
+                placeholder="Nhập giá mong muốn của bạn"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="numeric"
+                value={quotingPrice}
+                autoFocus
+                onChangeText={v => {
+                  const digits = v.replace(/\D/g, '')
+                  setQuotingPrice(digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.'))
+                }}
+              />
+              <Text style={styles.quotingUnit}>đ</Text>
+            </View>
+            <View style={styles.quotingBtnRow}>
+              <TouchableOpacity style={styles.quotingSendBtn} onPress={handleFloatingQuote}>
+                <Text style={styles.quotingSendText}>{t('online.sendQuote')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.quotingCloseBtn} onPress={() => { setQuotingTripId(null); setQuotingPrice('') }}>
+                <Text style={styles.quotingCloseBtnText}>Đóng</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Nút định vị */}
+      <TouchableOpacity
+        style={[styles.locateBtn, { top: insets.top + 80 }]}
+        onPress={() => {
+          const last = lastPosRef.current
+          if (last) mapRef.current?.panTo(last.lat, last.lng)
+        }}
+      >
+        <Ionicons name="locate" size={18} color={BRAND} />
+      </TouchableOpacity>
+
       {/* Bottom sheet – danh sách chuyến */}
       <Animated.View
         style={[
           styles.sheet,
+          { bottom: insets.bottom },
           { transform: [{ translateY: sheetAnim }] },
         ]}
       >
-        {/* Handle + header */}
-        <TouchableOpacity
-          style={styles.sheetHandle}
-          onPress={toggleSheet}
-          activeOpacity={0.8}
-        >
+        {/* Handle + header – kéo lên/xuống hoặc tap để toggle */}
+        <View style={styles.sheetHandle} {...handlePan.panHandlers}>
           <View style={styles.handleBar} />
           <View style={styles.sheetHeaderRow}>
             {/* Nút tắt sẵn sàng + badge số chuyến */}
@@ -474,7 +662,7 @@ export default function OnlineScreen() {
               )}
             </View>
 
-            {/* Toggle trời mưa */}
+            {/* Toggle mưa */}
             <View style={styles.autoToggleWrap}>
               <Ionicons name="rainy-outline" size={15} color="#64748B" />
               <Text style={styles.autoToggleLabel}>{t('autoQuote.rainMode')}</Text>
@@ -487,7 +675,7 @@ export default function OnlineScreen() {
               />
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
 
         {/* List */}
         <FlatList
@@ -508,10 +696,19 @@ export default function OnlineScreen() {
   )
 }
 
+function DetailRow({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <View style={styles.detailRow}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={[styles.detailValue, highlight && styles.detailHighlight]} numberOfLines={3}>{value}</Text>
+    </View>
+  )
+}
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#E8EDF6',
   },
 
   // ── Header overlay ──
@@ -525,11 +722,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: 14,
-    marginTop: 8,
-    backgroundColor: '#ffffffee',
+    marginTop: 10,
+    backgroundColor: '#fff',
     borderRadius: 18,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 11,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12,
@@ -545,15 +742,15 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: BRAND_LIGHT,
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarLetter: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
     color: BRAND,
   },
@@ -562,7 +759,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   driverName: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
     color: BRAND,
     flexShrink: 1,
@@ -584,7 +781,18 @@ const styles = StyleSheet.create({
   },
   balanceStack: {
     alignItems: 'center',
-    gap: 2,
+    gap: 1,
+    minWidth: 64,
+  },
+  balanceLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  balanceODC: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: BRAND,
   },
   balanceText: {
     fontSize: 13,
@@ -604,6 +812,21 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  locateBtn: {
+    position: 'absolute',
+    right: 28,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 8,
+  },
   offlineBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -622,7 +845,6 @@ const styles = StyleSheet.create({
   // ── Bottom sheet ──
   sheet: {
     position: 'absolute',
-    bottom: 0,
     left: 0,
     right: 0,
     height: SHEET_HEIGHT,
@@ -681,7 +903,7 @@ const styles = StyleSheet.create({
   autoToggleWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   autoToggleLabel: {
     fontSize: 12,
@@ -710,127 +932,244 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
 
+  // ── Floating báo giá ──
+  quotingOverlay: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 50,
+  },
+  quotingCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    elevation: 12,
+    gap: 12,
+  },
+  quotingTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: BRAND,
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  quotingInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: BRAND_LIGHT,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 0,
+    gap: 4,
+  },
+  quotingInput: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '400',
+    color: BRAND,
+    paddingVertical: 8,
+  },
+  quotingUnit: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: BRAND,
+  },
+  quotingBtnRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  quotingSendBtn: {
+    flex: 7,
+    backgroundColor: BRAND,
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  quotingCloseBtn: {
+    flex: 3,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  quotingSendText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  quotingCloseBtnText: {
+    color: '#64748B',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+
   // ── Card chuyến ──
   card: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#fff',
     borderRadius: 14,
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  cardTop: {
+  cardIdRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'space-between',
+    gap: 6,
   },
-  cardIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: BRAND_LIGHT,
+  cardIdLeft: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 5,
+    flexShrink: 1,
   },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1E293B',
+  cardIdRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
   },
-  cardKm: {
-    fontWeight: '500',
+  cardIdLabel: {
+    fontSize: 11,
     color: '#64748B',
-    fontSize: 13,
+    fontWeight: '400',
   },
-  cardSub: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 2,
+  cardBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginTop: 1,
+    gap: 8,
+  },
+  cardId: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: BRAND,
+    flexShrink: 1,
+  },
+  quotedPriceBold: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  cardAddrRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  noteContent: {
+    fontSize: 13,
+    color: '#92400E',
+    fontStyle: 'italic',
+    lineHeight: 17,
+    flex: 1,
+  },
+  cardAddr: {
+    fontSize: 13,
+    lineHeight: 17,
+    color: '#475569',
+    flex: 1,
   },
   quoteBtn: {
     backgroundColor: BRAND,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 10,
+    marginBottom: 2,
   },
   quoteBtnText: {
     color: '#fff',
     fontWeight: '700',
-    fontSize: 13,
+    fontSize: 12,
   },
-  quotedBadge: {
+  quotedInline: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#F0FDF4',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-  },
-  quotedBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#15803D',
   },
   expandedArea: {
     marginTop: 12,
+    gap: 10,
+  },
+  detailSection: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
     gap: 8,
+  },
+  detailLabel: {
+    fontSize: 12,
+    color: '#94A3B8',
+    width: 72,
+    flexShrink: 0,
+  },
+  detailValue: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1E293B',
+    textAlign: 'right',
+  },
+  detailHighlight: {
+    color: BRAND,
   },
   priceInput: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 10,
-    padding: 10,
-    fontSize: 15,
-    color: '#0F172A',
-  },
-  expandedBtns: {
-    flexDirection: 'row',
-    gap: 8,
+    flex: 1,
+    backgroundColor: BRAND_LIGHT,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 14,
+    fontWeight: '600',
+    color: BRAND,
   },
   sendBtn: {
-    flex: 1,
     backgroundColor: BRAND,
-    padding: 10,
-    borderRadius: 10,
-    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
   },
   sendBtnText: {
     color: '#fff',
     fontWeight: '700',
-    fontSize: 14,
+    fontSize: 12,
   },
   closeBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: '#F1F5F9',
-    paddingHorizontal: 18,
-    padding: 10,
-    borderRadius: 10,
     alignItems: 'center',
-  },
-  closeBtnText: {
-    color: '#64748B',
-    fontWeight: '600',
+    justifyContent: 'center',
   },
   quotedRow: {
-    marginTop: 10,
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  quotedText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#15803D',
-    fontWeight: '600',
+    gap: 4,
   },
   cancelBtn: {
     backgroundColor: '#FEE2E2',
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingVertical: 7,
+    borderRadius: 10,
+    marginBottom: 2,
   },
   cancelBtnText: {
     color: '#DC2626',
     fontWeight: '700',
-    fontSize: 13,
+    fontSize: 12,
   },
 })

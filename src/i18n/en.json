@@ -38,7 +38,8 @@
     "vietnamese": "Tiếng Việt",
     "english":    "English",
     "odc":        "ODC",
-    "balance":    "Balance"
+    "balance":    "Balance",
+    "skip":       "Skip"
   },
   "auth": {
     "enterPhone":       "Enter your phone number",
@@ -94,7 +95,8 @@
     "referralPlaceholder": "Enter code if available",
     "creating":            "Creating account...",
     "welcome":             "Welcome {{name}}!",
-    "welcomeBonus":        "You received 100 ODC to get started"
+    "welcomeBonus":        "You received 100 ODC to get started",
+    "avatarHint":          "Your photo helps passengers trust and choose you"
   },
   "roleSelect": {
     "slogan":      "Connecting journeys – Opening tomorrow",
@@ -143,9 +145,16 @@
     "quoteSent":       "Sent",
     "sendQuote":       "Send quote",
     "close":           "Close",
-    "cancelQuote":     "Cancel",
+    "cancelQuote":            "Cancel",
+    "quoteCanceled":          "{{name}} canceled their quote. Please choose another driver.",
+    "cancelQuoteConfirmTitle": "Cancel trip",
+    "cancelQuoteConfirmMsg":   "Are you sure you want to cancel this trip?",
     "autoTag":         "· auto",
-    "pricePlaceholder":"Enter price VND (e.g. 50000)"
+    "pricePlaceholder":"Enter price VND (e.g. 50000)",
+    "newTrip":         "New Trip",
+    "distance":        "Distance",
+    "priceLabel":      "Your Quote (VND)",
+    "odcBalance":      "ODC Balance"
   },
   "autoQuote": {
     "title":          "Auto Quote Settings",
@@ -208,7 +217,13 @@
     "saveLocTitle":          "Save location",
     "saveLocNameLabel":      "Name this location",
     "saveLocNamePlaceholder":"E.g. Home, Office, Parents...",
-    "saveLocBtn":            "Save"
+    "saveLocBtn":            "Save",
+    "abandonTrip":           "Abandon trip",
+    "abandonConfirm":        "Abandon this trip and return to home?",
+    "waitForRating":         "Waiting for passenger to rate...",
+    "firstTripTitle":        "First trip completed!",
+    "firstTripBonus":        "You've just completed your first trip on OpenDrive.\n\nOpenDrive has rewarded you with 10 ODC as a welcome gift.\nKeep up the great work — the community needs you!",
+    "trips":                 "trips"
   },
   "cancel": {
     "title":          "Cancel trip",
@@ -302,7 +317,7 @@
     "title":      "User Guide",
     "driverTitle":    "For Drivers",
     "customerTitle":  "For Passengers",
-    "minerTitle":     "For ODC Miners"
+    "minerTitle":     "ODC Miners"
   },
   "error": {
     "insufficientODC": "Insufficient ODC balance",

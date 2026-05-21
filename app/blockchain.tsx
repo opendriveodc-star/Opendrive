@@ -206,7 +206,7 @@ const s = StyleSheet.create({
   root:   { flex: 1, backgroundColor: '#fff' },
 
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: BRAND_LIGHT },
-  backBtn:    { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, borderColor: BRAND_LIGHT, alignItems: 'center', justifyContent: 'center' },
+  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#1A2E5E', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 2 },
   headerCenter: { flex: 1, alignItems: 'center' },
   headerTitle:  { fontSize: 16, fontWeight: '700', color: BRAND },
   headerSub:    { fontSize: 11, color: '#94A3B8', marginTop: 1 },

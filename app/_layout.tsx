@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
-import { View } from 'react-native'
+import { View, Text, TextInput } from 'react-native'
 import { Stack } from 'expo-router'
 import { initI18n } from '../src/i18n'
 import GlobalAlert from '../src/components/GlobalAlert'
+
+// Tắt font scaling toàn app – tránh layout vỡ khi user tăng cỡ chữ hệ thống
+// @ts-ignore
+Text.defaultProps = { ...(Text.defaultProps ?? {}), allowFontScaling: false }
+// @ts-ignore
+TextInput.defaultProps = { ...(TextInput.defaultProps ?? {}), allowFontScaling: false }
 
 // Firebase Firestore WebChannel transport logs console.warn directly,
 // bypassing setLogLevel. Filter it out – it's cosmetic noise on logout.

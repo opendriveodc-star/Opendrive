@@ -99,6 +99,7 @@ export default function GuideScreen() {
       <View style={s.tabRow}>
         {tabs.map(({ key, icon, label }) => {
           const active = tab === key
+          const color  = active ? '#fff' : BRAND
           return (
             <TouchableOpacity
               key={key}
@@ -106,7 +107,13 @@ export default function GuideScreen() {
               onPress={() => setTab(key)}
               activeOpacity={0.8}
             >
-              <Ionicons name={icon as any} size={16} color={active ? '#fff' : BRAND} />
+              {key === 'miner' ? (
+                <View style={[s.odcBadge, { borderColor: color }]}>
+                  <Text style={[s.odcBadgeText, { color }]}>ODC</Text>
+                </View>
+              ) : (
+                <Ionicons name={icon as any} size={20} color={color} />
+              )}
               <Text style={[s.tabText, active && s.tabTextActive]}>{label}</Text>
             </TouchableOpacity>
           )
@@ -141,7 +148,7 @@ const s = StyleSheet.create({
   root:  { flex: 1, backgroundColor: '#fff' },
 
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: BRAND_LIGHT },
-  backBtn:     { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, borderColor: BRAND_LIGHT, alignItems: 'center', justifyContent: 'center' },
+  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#1A2E5E', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 2 },
   headerTitle: { fontSize: 16, fontWeight: '700', color: BRAND },
 
   tabRow: { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
@@ -149,6 +156,8 @@ const s = StyleSheet.create({
   tabBtnActive: { backgroundColor: BRAND, borderColor: BRAND },
   tabText:      { fontSize: 11, fontWeight: '600', color: BRAND },
   tabTextActive: { color: '#fff' },
+  odcBadge:     { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  odcBadgeText: { fontSize: 6, fontWeight: '800', letterSpacing: 0.2 },
 
   scroll: { paddingHorizontal: 20, paddingTop: 8 },
 

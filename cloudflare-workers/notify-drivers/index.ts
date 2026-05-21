@@ -79,6 +79,56 @@ async function verifyFirebaseJWT(token: string): Promise<boolean> {
   }
 }
 
+// ── Geohash helpers ──────────────────────────────────────────────────────────
+const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz'
+
+function geohashDecode(hash: string) {
+  let isLng = true
+  const lat = [-90.0, 90.0], lng = [-180.0, 180.0]
+  for (const c of hash) {
+    const v = BASE32.indexOf(c)
+    for (let b = 4; b >= 0; b--) {
+      const range = isLng ? lng : lat
+      const mid   = (range[0] + range[1]) / 2
+      if ((v >> b) & 1) range[0] = mid; else range[1] = mid
+      isLng = !isLng
+    }
+  }
+  return {
+    lat:    (lat[0] + lat[1]) / 2,
+    lng:    (lng[0] + lng[1]) / 2,
+    latErr: (lat[1] - lat[0]) / 2,
+    lngErr: (lng[1] - lng[0]) / 2,
+  }
+}
+
+function geohashEncode(lat: number, lng: number, prec: number): string {
+  let isLng = true, ch = 0, bit = 0, result = ''
+  const latR = [-90.0, 90.0], lngR = [-180.0, 180.0]
+  while (result.length < prec) {
+    const range = isLng ? lngR : latR
+    const val   = isLng ? lng  : lat
+    const mid   = (range[0] + range[1]) / 2
+    if (val >= mid) { ch |= 1 << (4 - bit); range[0] = mid } else range[1] = mid
+    isLng = !isLng
+    if (++bit === 5) { result += BASE32[ch]; bit = 0; ch = 0 }
+  }
+  return result
+}
+
+function geohashNeighbors(hash: string): string[] {
+  const prec = hash.length
+  const { lat, lng, latErr, lngErr } = geohashDecode(hash)
+  const cells = new Set([hash])
+  for (const [dlat, dlng] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]] as [number,number][]) {
+    const nLat = lat + dlat * latErr * 2
+    const nLng = lng + dlng * lngErr * 2
+    if (nLat > -90 && nLat < 90 && nLng > -180 && nLng < 180)
+      cells.add(geohashEncode(nLat, nLng, prec))
+  }
+  return [...cells]
+}
+
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -107,48 +157,63 @@ export default {
     }
 
     try {
-      const accessToken   = await getFirebaseAccessToken(env.FIREBASE_SERVICE_ACCOUNT)
-      const projectId     = env.FIREBASE_PROJECT_ID
-      const geohashPrefix = geohash.slice(0, 6)
-      const randomId      = Math.floor(Math.random() * 6)  // 0-5
-
-      // Query Firestore REST API
+      const accessToken  = await getFirebaseAccessToken(env.FIREBASE_SERVICE_ACCOUNT)
+      const projectId    = env.FIREBASE_PROJECT_ID
       const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`
-      const queryBody = {
-        structuredQuery: {
-          from:  [{ collectionId: 'drivers' }],
-          where: {
-            compositeFilter: {
-              op:      'AND',
-              filters: [
-                { fieldFilter: { field: { fieldPath: 'status' },      op: 'EQUAL',               value: { stringValue: 'ready' } } },
-                { fieldFilter: { field: { fieldPath: 'vehicleType' }, op: 'EQUAL',               value: { stringValue: vehicleType } } },
-                { fieldFilter: { field: { fieldPath: 'random_id' },   op: 'EQUAL',               value: { integerValue: randomId } } },
-                { fieldFilter: { field: { fieldPath: 'geohash' },     op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: geohashPrefix } } },
-                { fieldFilter: { field: { fieldPath: 'geohash' },     op: 'LESS_THAN_OR_EQUAL',    value: { stringValue: geohashPrefix + '~' } } },
-              ],
+
+      // 9 ô geohash: center + 8 neighbors
+      const cells    = geohashNeighbors(geohash.slice(0, 6))
+      const startId  = Math.floor(Math.random() * 6)
+
+      type DriverDoc = { document?: { fields?: { fcmToken?: { stringValue?: string }; uid?: { stringValue?: string } } } }
+
+      async function queryCell(prefix: string, randomId: number): Promise<DriverDoc[]> {
+        const body = {
+          structuredQuery: {
+            from:  [{ collectionId: 'drivers' }],
+            where: {
+              compositeFilter: {
+                op: 'AND',
+                filters: [
+                  { fieldFilter: { field: { fieldPath: 'status' },      op: 'EQUAL',                 value: { stringValue: 'ready' } } },
+                  { fieldFilter: { field: { fieldPath: 'vehicleType' }, op: 'EQUAL',                 value: { stringValue: vehicleType } } },
+                  { fieldFilter: { field: { fieldPath: 'random_id' },   op: 'EQUAL',                 value: { integerValue: randomId } } },
+                  { fieldFilter: { field: { fieldPath: 'geohash' },     op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: prefix } } },
+                  { fieldFilter: { field: { fieldPath: 'geohash' },     op: 'LESS_THAN_OR_EQUAL',    value: { stringValue: prefix + '~' } } },
+                ],
+              },
             },
           },
-        },
+        }
+        const res = await fetch(firestoreUrl, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) return []
+        try { return await res.json() as DriverDoc[] } catch { return [] }
       }
 
-      const firestoreRes = await fetch(firestoreUrl, {
-        method:  'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type':  'application/json',
-        },
-        body: JSON.stringify(queryBody),
-      })
-      const docs = await firestoreRes.json() as Array<{
-        document?: { fields?: { fcmToken?: { stringValue?: string } } }
-      }>
-
-      // Lấy FCM tokens
       const fcmTokens: string[] = []
-      for (const item of docs) {
-        const token = item.document?.fields?.fcmToken?.stringValue
-        if (token) fcmTokens.push(token)
+      const seenUids  = new Set<string>()
+
+      // Thử từng random_id cho đến khi tìm được tài xế
+      for (let i = 0; i < 6; i++) {
+        const randomId = (startId + i) % 6
+        // Chạy 9 ô song song
+        const results = await Promise.allSettled(cells.map(c => queryCell(c, randomId)))
+        for (const r of results) {
+          if (r.status !== 'fulfilled') continue
+          for (const item of r.value) {
+            const uid   = item.document?.fields?.uid?.stringValue
+            const token = item.document?.fields?.fcmToken?.stringValue
+            if (token && uid && !seenUids.has(uid)) {
+              seenUids.add(uid)
+              fcmTokens.push(token)
+            }
+          }
+        }
+        if (fcmTokens.length > 0) break
       }
 
       if (fcmTokens.length === 0) {

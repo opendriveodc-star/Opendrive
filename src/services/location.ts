@@ -35,6 +35,26 @@ export function encodeGeohash(lat: number, lng: number, precision: number): stri
   return geohash
 }
 
+export function decodeGeohash(geohash: string): { lat: number; lng: number } {
+  let evenBit = true
+  let minLat = -90, maxLat = 90
+  let minLng = -180, maxLng = 180
+  for (const c of geohash) {
+    const idx = BASE32.indexOf(c)
+    for (let bits = 4; bits >= 0; bits--) {
+      if (evenBit) {
+        const midLng = (minLng + maxLng) / 2
+        if (idx >> bits & 1) minLng = midLng; else maxLng = midLng
+      } else {
+        const midLat = (minLat + maxLat) / 2
+        if (idx >> bits & 1) minLat = midLat; else maxLat = midLat
+      }
+      evenBit = !evenBit
+    }
+  }
+  return { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 }
+}
+
 // 6 ký tự cho Firestore query (±610m)
 export function geohashForQuery(lat: number, lng: number): string {
   return encodeGeohash(lat, lng, LOCATION.GEOHASH_QUERY_LENGTH)

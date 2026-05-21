@@ -5,7 +5,42 @@
 import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'react-native-webrtc'
 import { ICE_CONFIG } from '../constants'
 import { rtdb } from './firebase'
-import type { PeerConnectionEntry, DataChannelMessage } from '../types'
+import { getTurnCredentials } from './cloudflare'
+import type { PeerConnectionEntry, DataChannelMessage, TurnCredentials } from '../types'
+
+// Cache TURN credentials (TTL 48h từ Cloudflare)
+let cachedTurn: TurnCredentials | null = null
+let turnFetchedAt = 0
+
+// TURN fallback dùng khi Worker lỗi (public server, chỉ dùng khi test)
+const FALLBACK_TURN: RTCIceServer[] = [
+  { urls: 'turn:openrelay.metered.ca:80',  username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+]
+
+async function getIceConfig(): Promise<RTCConfiguration> {
+  const now = Date.now()
+  if (!cachedTurn || now - turnFetchedAt > 46 * 3600 * 1000) {
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('TURN timeout')), 10000),
+      )
+      cachedTurn = await Promise.race([getTurnCredentials(), timeout])
+      turnFetchedAt = now
+      console.log('[ice] TURN fetched:', cachedTurn.urls)
+    } catch (e) {
+      console.log('[ice] TURN Worker failed, using fallback TURN:', String(e))
+    }
+  }
+  const turnServers: RTCIceServer[] = cachedTurn
+    ? [{ urls: cachedTurn.urls, username: cachedTurn.username, credential: cachedTurn.credential }]
+    : FALLBACK_TURN
+  return {
+    ...ICE_CONFIG,
+    iceServers: [...ICE_CONFIG.iceServers!, ...turnServers],
+  }
+}
 
 const peerConnections = new Map<string, PeerConnectionEntry>()
 
@@ -26,8 +61,9 @@ export function createPeerConnection(
   customerId:    string,
   onMessage:     (msg: DataChannelMessage, tripId: string) => void,
   onIceCandidate: (candidate: RTCIceCandidate, tripId: string) => void,
+  iceConfig:     RTCConfiguration = ICE_CONFIG,
 ): RTCPeerConnection {
-  const pc = new RTCPeerConnection(ICE_CONFIG)
+  const pc = new RTCPeerConnection(iceConfig)
   const nativePc = pc as any
 
   nativePc.onicecandidate = ({ candidate }: any) => {
@@ -99,6 +135,10 @@ export function getPeerConnection(tripId: string): PeerConnectionEntry | undefin
   return peerConnections.get(tripId)
 }
 
+export function prefetchTurnCredentials(): void {
+  getIceConfig().catch(() => {})
+}
+
 export function getAllTripIds(): string[] {
   return Array.from(peerConnections.keys())
 }
@@ -108,18 +148,24 @@ export async function pushIceCandidate(
   role:     PeerRole,
   candidate: RTCIceCandidate,
 ): Promise<void> {
-  const existing = await rtdb.get<{ candidates?: unknown[] }>(`trips/${tripId}/ice/${role}`) ?? {}
-  const candidates = (existing.candidates ?? []) as unknown[]
-  candidates.push(candidate.toJSON())
-  await rtdb.set(`trips/${tripId}/ice/${role}`, { candidates })
+  try {
+    console.log(`[ice] pushIceCandidate role=${role}`, JSON.stringify(candidate.toJSON()))
+    const existing = await rtdb.get<{ candidates?: unknown[] }>(`trips/${tripId}/ice/${role}`) ?? {}
+    const candidates = (existing.candidates ?? []) as unknown[]
+    candidates.push(candidate.toJSON())
+    await rtdb.set(`trips/${tripId}/ice/${role}`, { candidates })
+    console.log(`[ice] pushed candidate #${candidates.length} for ${role}`)
+  } catch (e) {
+    console.log(`[ice] pushIceCandidate FAILED role=${role}:`, String(e))
+  }
 }
 
 export async function setOffer(tripId: string, offer: RTCSessionDescriptionInit): Promise<void> {
-  await rtdb.update(`trips/${tripId}/ice`, { offer })
+  await rtdb.set(`trips/${tripId}/ice/offer`, offer)
 }
 
 export async function setAnswer(tripId: string, answer: RTCSessionDescriptionInit): Promise<void> {
-  await rtdb.update(`trips/${tripId}/ice`, { answer })
+  await rtdb.set(`trips/${tripId}/ice/answer`, answer)
 }
 
 export async function watchRemoteIceCandidates(
@@ -165,19 +211,26 @@ export async function createOfferConnection(
   onMessage: (msg: DataChannelMessage, tripId: string) => void,
   onChannelOpen?: () => void,
 ): Promise<PeerConnectionBridge> {
+  console.log('[offer] start', tripId)
+  const iceConfig = await getIceConfig()
   const pc = createPeerConnection(tripId, tripId, onMessage, async (candidate) => {
     await pushIceCandidate(tripId, 'customer', candidate)
-  })
+  }, iceConfig)
 
   const dc = createDataChannel(tripId)
   if (dc) {
     setupDataChannel(dc, tripId, onMessage)
-    dc.onopen = () => onChannelOpen?.()
+    dc.onopen = () => {
+      console.log('[offer] datachannel open')
+      onChannelOpen?.()
+    }
   }
 
   const offer = await pc.createOffer()
   await pc.setLocalDescription(offer)
+  console.log('[offer] setLocalDescription OK, writing offer to RTDB...')
   await setOffer(tripId, { type: offer.type, sdp: offer.sdp })
+  console.log('[offer] setOffer OK, watching candidates + waiting for answer...')
 
   const stopWatching = await watchRemoteIceCandidates(tripId, 'customer', async (candidate) => {
     try {
@@ -188,7 +241,9 @@ export async function createOfferConnection(
   })
 
   const answer = await waitForRemoteDescription(tripId, 'answer')
+  console.log('[offer] got answer, type=', answer.type)
   await pc.setRemoteDescription(new RTCSessionDescription({ type: answer.type, sdp: answer.sdp! }))
+  console.log('[offer] setRemoteDescription OK → waiting for datachannel open')
 
   return {
     pc,
@@ -204,10 +259,25 @@ export async function createAnswerConnection(
   onMessage: (msg: DataChannelMessage, tripId: string) => void,
   onChannelOpen?: () => void,
 ): Promise<PeerConnectionBridge> {
+  console.log('[answer] start', tripId)
+  const iceConfig = await getIceConfig()
   const pc = createPeerConnection(tripId, tripId, onMessage, async (candidate) => {
     await pushIceCandidate(tripId, 'driver', candidate)
-  })
+  }, iceConfig)
 
+  // ondatachannel fires AFTER the connection is established — register onopen here
+  ;(pc as any).ondatachannel = ({ channel }: any) => {
+    console.log('[answer] ondatachannel fired')
+    const entry = getPeerConnection(tripId)
+    if (entry) entry.dc = channel
+    setupDataChannel(channel, tripId, onMessage)
+    channel.onopen = () => {
+      console.log('[answer] datachannel open')
+      onChannelOpen?.()
+    }
+  }
+
+  console.log('[answer] watchRemoteIceCandidates')
   const stopWatching = await watchRemoteIceCandidates(tripId, 'driver', async (candidate) => {
     try {
       await pc.addIceCandidate(candidate)
@@ -216,18 +286,22 @@ export async function createAnswerConnection(
     }
   })
 
+  console.log('[answer] waiting for offer...')
   const offer = await waitForRemoteDescription(tripId, 'offer')
+  console.log('[answer] got offer, type=', offer.type)
+
   await pc.setRemoteDescription(new RTCSessionDescription({ type: offer.type, sdp: offer.sdp! }))
+  console.log('[answer] setRemoteDescription OK')
 
   const answer = await pc.createAnswer()
-  await pc.setLocalDescription(answer)
-  await setAnswer(tripId, { type: answer.type, sdp: answer.sdp })
+  console.log('[answer] createAnswer OK, type=', answer.type)
 
-  const dc = getPeerConnection(tripId)?.dc
-  if (dc) {
-    setupDataChannel(dc, tripId, onMessage)
-    dc.onopen = () => onChannelOpen?.()
-  }
+  await pc.setLocalDescription(answer)
+  console.log('[answer] setLocalDescription OK')
+
+  console.log('[answer] writing answer to RTDB...')
+  await setAnswer(tripId, { type: answer.type, sdp: answer.sdp })
+  console.log('[answer] setAnswer OK → waiting for datachannel')
 
   return {
     pc,

@@ -27,6 +27,7 @@ const firebaseConfig = {
 }
 
 const app = initializeApp(firebaseConfig)
+export { app }
 
 let auth: ReturnType<typeof getAuth>
 try {
@@ -107,5 +108,40 @@ export const rtdb = {
       method: 'DELETE',
     })
     if (!res.ok) throw new Error(`RTDB DELETE failed: ${res.status}`)
+  },
+}
+
+// ─── Firestore via REST (tránh WebChannel issue trên Android) ─────────────────
+
+const FS_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE.projectId}/databases/(default)/documents`
+
+// Convert JS value → Firestore REST value
+function toFsValue(v: unknown): unknown {
+  if (v === null || v === undefined) return { nullValue: null }
+  if (typeof v === 'boolean')        return { booleanValue: v }
+  if (typeof v === 'number')         return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v }
+  if (typeof v === 'string')         return { stringValue: v }
+  return { stringValue: String(v) }
+}
+
+export const firestoreRest = {
+  /** PATCH only the specified fields (Firestore field mask update) */
+  async patch(collection: string, docId: string, fields: Record<string, unknown>): Promise<void> {
+    const token = await getIdToken()
+    const mask  = Object.keys(fields).map(f => `updateMask.fieldPaths=${encodeURIComponent(f)}`).join('&')
+    const body  = {
+      fields: Object.fromEntries(
+        Object.entries(fields).map(([k, v]) => [k, toFsValue(v)]),
+      ),
+    }
+    const res = await fetch(`${FS_BASE}/${collection}/${docId}?${mask}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body:    JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const err = await res.text().catch(() => res.status.toString())
+      throw new Error(`Firestore PATCH failed ${res.status}: ${err}`)
+    }
   },
 }

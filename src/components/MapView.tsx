@@ -1,10 +1,15 @@
-import React, { useRef, forwardRef, useImperativeHandle } from 'react'
+import React, { useRef, forwardRef, useImperativeHandle, useMemo } from 'react'
 import { View, StyleSheet } from 'react-native'
 import { WebView, WebViewMessageEvent } from 'react-native-webview'
 
 export interface MapViewHandle {
-  updateDriverMarker: (lat: number, lng: number) => void
-  panTo: (lat: number, lng: number) => void
+  updateDriverMarker:    (lat: number, lng: number) => void
+  panTo:                 (lat: number, lng: number) => void
+  setBottomPadding:      (px: number) => void
+  setPadding:            (top: number, bottom: number) => void
+  showCustomerMarker:    (lat: number, lng: number) => void
+  hideCustomerMarker:    () => void
+  fitBoundsToMarkers:    (lat1: number, lng1: number, lat2: number, lng2: number, paddingBottom?: number) => void
 }
 
 interface MapViewProps {
@@ -30,6 +35,36 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
       panTo(newLat, newLng) {
         webViewRef.current?.injectJavaScript(`
           if (window.panTo) window.panTo(${newLat}, ${newLng});
+          true;
+        `)
+      },
+      setBottomPadding(px) {
+        webViewRef.current?.injectJavaScript(`
+          if (window.setBottomPadding) window.setBottomPadding(${px});
+          true;
+        `)
+      },
+      setPadding(top, bottom) {
+        webViewRef.current?.injectJavaScript(`
+          if (window.setPadding) window.setPadding(${top}, ${bottom});
+          true;
+        `)
+      },
+      showCustomerMarker(newLat, newLng) {
+        webViewRef.current?.injectJavaScript(`
+          if (window.showCustomerMarker) window.showCustomerMarker(${newLat}, ${newLng});
+          true;
+        `)
+      },
+      hideCustomerMarker() {
+        webViewRef.current?.injectJavaScript(`
+          if (window.hideCustomerMarker) window.hideCustomerMarker();
+          true;
+        `)
+      },
+      fitBoundsToMarkers(lat1, lng1, lat2, lng2, paddingBottom) {
+        webViewRef.current?.injectJavaScript(`
+          if (window.fitBoundsToMarkers) window.fitBoundsToMarkers(${lat1}, ${lng1}, ${lat2}, ${lng2}, ${paddingBottom ?? 90});
           true;
         `)
       },
@@ -89,6 +124,12 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
       0%   { transform: translate(-50%,-50%) scale(1);   opacity: 0.8; }
       100% { transform: translate(-50%,-50%) scale(3.5); opacity: 0; }
     }
+    .customer-pin {
+      width: 20px; height: 20px;
+      background: #EA580C; border: 2px solid #fff; border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(234,88,12,0.45);
+      display: flex; align-items: center; justify-content: center;
+    }
     `}
   </style>
 </head>
@@ -146,10 +187,34 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
       .addTo(map);
     window.updateMarkerPosition = function(lat, lng) {
       marker.setLngLat([lng, lat]);
-      map.panTo([lng, lat]);
     };
     window.panTo = function(lat, lng) {
       map.flyTo({ center: [lng, lat], zoom: 17, duration: 500 });
+    };
+    window.setBottomPadding = function(px) {
+      map.easeTo({ padding: { top: 0, bottom: px, left: 0, right: 0 }, duration: 300 });
+    };
+    window.setPadding = function(top, bottom) {
+      map.easeTo({ padding: { top: top, bottom: bottom, left: 0, right: 0 }, duration: 300 });
+    };
+    var customerMarker = null;
+    window.showCustomerMarker = function(lat, lng) {
+      var el = document.createElement('div');
+      el.className = 'customer-pin';
+      el.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" fill="#fff"/></svg>';
+      if (customerMarker) customerMarker.remove();
+      customerMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([lng, lat]).addTo(map);
+    };
+    window.hideCustomerMarker = function() {
+      if (customerMarker) { customerMarker.remove(); customerMarker = null; }
+    };
+    window.fitBoundsToMarkers = function(lat1, lng1, lat2, lng2, pb) {
+      var bounds = new maplibregl.LngLatBounds(
+        [Math.min(lng1, lng2), Math.min(lat1, lat2)],
+        [Math.max(lng1, lng2), Math.max(lat1, lat2)]
+      );
+      map.fitBounds(bounds, { padding: { top: 90, right: 90, bottom: pb || 90, left: 90 }, duration: 800, maxZoom: 16 });
     };
     `}
 
@@ -163,16 +228,26 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
 </body>
 </html>`
 
+    // baseUrl cần thiết để Android WebView cho phép load script từ CDN bên ngoài
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const source = useMemo(() => ({ html, baseUrl: 'https://tiles.openfreemap.org' }), [])
+
     return (
       <View style={styles.container}>
         <WebView
           ref={webViewRef}
-          source={{ html }}
+          source={source}
           style={styles.map}
           scrollEnabled={false}
           originWhitelist={['*']}
           javaScriptEnabled
+          domStorageEnabled
+          allowFileAccess
+          allowUniversalAccessFromFileURLs
+          mixedContentMode="always"
           onMessage={handleMessage}
+          onError={e => console.warn('MapView WebView error:', e.nativeEvent)}
+          onHttpError={e => console.warn('MapView HTTP error:', e.nativeEvent.statusCode)}
         />
       </View>
     )

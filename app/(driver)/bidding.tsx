@@ -13,6 +13,8 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { Ionicons } from '@expo/vector-icons'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { useLocalSearchParams, router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
@@ -84,22 +86,32 @@ export default function BiddingScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title}>{t('trip.title')}</Text>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => router.back()}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="chevron-back" size={22} color={COLORS.driver.primary} />
+        </TouchableOpacity>
+        <Text style={styles.title}>{t('online.newTrip')}</Text>
+      </View>
 
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+      <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.card}>
-          <Row label={t('trip.distance')} value={`${estimatedKm} km`} />
+          <Row label={t('online.distance')} value={`${estimatedKm} km`} />
           <Row label={t('trip.vehicleType')} value={vehicleType ?? ''} />
-          <Row label={t('auth.enterPhone')} value={maskPhone(customerPhone ?? '')} />
-          <Row label={t('driver.balance')} value={`${balance.toFixed(2)} ODC`} />
+          <Row label={t('online.customer')} value={maskPhone(customerPhone ?? '')} />
+          <Row label={t('online.odcBalance')} value={`${balance.toFixed(2)} ODC`} />
         </View>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>{t('trip.price')}</Text>
+          <Text style={styles.label}>{t('online.priceLabel')}</Text>
           <TextInput
             style={styles.input}
             value={price}
@@ -117,10 +129,11 @@ export default function BiddingScreen() {
         >
           {submitting
             ? <ActivityIndicator color="#FFF" />
-            : <Text style={styles.buttonText}>{t('trip.selectDriver')}</Text>}
+            : <Text style={styles.buttonText}>{t('online.sendQuote')}</Text>}
         </TouchableOpacity>
       </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   )
 }
 
@@ -138,14 +151,33 @@ const styles = StyleSheet.create({
     flex:            1,
     backgroundColor: COLORS.driver.background,
   },
+  topBar: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    paddingHorizontal: 12,
+    paddingVertical:   10,
+  },
+  backBtn: {
+    width:           36,
+    height:          36,
+    borderRadius:    18,
+    backgroundColor: '#fff',
+    alignItems:      'center',
+    justifyContent:  'center',
+    shadowColor:     COLORS.driver.primary,
+    shadowOffset:    { width: 0, height: 2 },
+    shadowOpacity:   0.08,
+    shadowRadius:    4,
+    elevation:       2,
+    marginRight:     10,
+  },
   content: {
     padding: 16,
   },
   title: {
-    fontSize:     22,
-    fontWeight:   '700',
-    color:        COLORS.driver.textPrimary,
-    marginBottom: 20,
+    fontSize:   20,
+    fontWeight: '700',
+    color:      COLORS.driver.textPrimary,
   },
   card: {
     backgroundColor: '#FFFFFF',

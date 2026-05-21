@@ -140,6 +140,8 @@ export interface PendingTrip {
   startedAt:     string       // ISO timestamp
   pickupGeohash: string       // 8 ký tự
   dropGeohash:   string       // 8 ký tự
+  pickupLat:     number
+  pickupLng:     number
   customerPhone: string
   rating:        RatingValue | null  // null cho đến khi khách đánh giá
 }
@@ -285,13 +287,20 @@ export interface PeerConnectionEntry {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface TripRealtimeInfo {
-  customerPhone: string
-  pickupGeohash: string
-  dropGeohash:   string
-  vehicleType:   VehicleType
-  estimatedKm:   number
-  createdAt:     number    // Unix timestamp
-  status:        TripStatus
+  customerPhone:  string
+  pickupGeohash:  string
+  dropGeohash:    string
+  pickupLat?:     number
+  pickupLng?:     number
+  dropLat?:       number
+  dropLng?:       number
+  vehicleType:    VehicleType
+  estimatedKm:    number
+  createdAt:      number    // Unix timestamp
+  status:         TripStatus
+  pickupAddress?: string
+  destAddress?:   string
+  note?:          string
 }
 
 export interface TripQuote {

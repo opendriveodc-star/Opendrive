@@ -38,7 +38,8 @@
     "vietnamese":     "Tiếng Việt",
     "english":        "English",
     "odc":            "ODC",
-    "balance":        "Số dư"
+    "balance":        "Số dư",
+    "skip":           "Bỏ qua"
   },
   "auth": {
     "enterPhone":       "Nhập số điện thoại của bạn",
@@ -94,7 +95,8 @@
     "referralPlaceholder": "Nhập mã nếu có",
     "creating":            "Đang tạo tài khoản...",
     "welcome":             "Chào mừng {{name}}!",
-    "welcomeBonus":        "Bạn nhận được 100 ODC để bắt đầu"
+    "welcomeBonus":        "Bạn nhận được 100 ODC để bắt đầu",
+    "avatarHint":          "Ảnh đại diện giúp khách hàng tin tưởng và chọn bạn hơn"
   },
   "roleSelect": {
     "slogan":      "Kết nối hành trình – Mở lối tương lai",
@@ -143,9 +145,16 @@
     "quoteSent":       "Đã gửi",
     "sendQuote":       "Gửi báo giá",
     "close":           "Đóng",
-    "cancelQuote":     "Hủy",
+    "cancelQuote":            "Hủy",
+    "quoteCanceled":          "{{name}} đã hủy báo giá. Vui lòng chọn tài xế khác.",
+    "cancelQuoteConfirmTitle": "Xác nhận hủy chuyến",
+    "cancelQuoteConfirmMsg":   "Bạn có chắc chắn muốn hủy chuyến này không?",
     "autoTag":         "· tự động",
-    "pricePlaceholder":"Nhập giá VNĐ (VD: 50000)"
+    "pricePlaceholder":"Nhập giá VNĐ (VD: 50000)",
+    "newTrip":         "Chuyến xe mới",
+    "distance":        "Khoảng cách",
+    "priceLabel":      "Giá báo (VNĐ)",
+    "odcBalance":      "Số dư ODC"
   },
   "autoQuote": {
     "title":          "Cài đặt báo giá tự động",
@@ -155,7 +164,7 @@
     "pricePerKm":     "Đơn giá từ km tiếp theo (đ/km)",
     "peakMultiplier": "Hệ số giờ cao điểm",
     "rainMultiplier": "Hệ số trời mưa",
-    "rainMode":       "Đang mưa",
+    "rainMode":       "Trời mưa",
     "sunnyMode":      "Trời nắng ☀️",
     "minKm":          "Km tối thiểu",
     "maxKm":          "Km tối đa",
@@ -208,7 +217,13 @@
     "saveLocTitle":          "Lưu vị trí",
     "saveLocNameLabel":      "Đặt tên cho vị trí này",
     "saveLocNamePlaceholder":"VD: Nhà, Cơ quan, Nhà nội...",
-    "saveLocBtn":            "Lưu lại"
+    "saveLocBtn":            "Lưu lại",
+    "abandonTrip":           "Bỏ chuyến",
+    "abandonConfirm":        "Bỏ chuyến này và quay về trang chủ?",
+    "waitForRating":         "Đang chờ khách đánh giá...",
+    "firstTripTitle":        "Chúc mừng chuyến đầu tiên!",
+    "firstTripBonus":        "Bạn vừa hoàn thành chuyến xe đầu tiên trên OpenDrive.\n\nHệ thống đã tặng bạn 10 ODC như một lời chào mừng.\nHãy tiếp tục cống hiến — cộng đồng cần bạn!",
+    "trips":                 "chuyến"
   },
   "cancel": {
     "title":          "Hủy chuyến",
@@ -302,7 +317,7 @@
     "title":      "Hướng dẫn sử dụng",
     "driverTitle":    "Dành cho Tài xế",
     "customerTitle":  "Dành cho Khách",
-    "minerTitle":     "Dành cho Người đào ODC"
+    "minerTitle":     "Người đào ODC"
   },
   "error": {
     "insufficientODC": "Số dư ODC không đủ",

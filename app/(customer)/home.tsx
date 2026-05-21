@@ -346,6 +346,10 @@ export default function CustomerHomeScreen() {
         customerPhone:  info.phone,
         pickupGeohash,
         dropGeohash,
+        pickupLat:      pickup.lat,
+        pickupLng:      pickup.lng,
+        dropLat:        dest.lat,
+        dropLng:        dest.lng,
         vehicleType:    vehicle,
         transportModel,
         estimatedKm:    Math.max(1, Math.round(km * 10) / 10),
@@ -367,6 +371,16 @@ export default function CustomerHomeScreen() {
 
   async function handleSelectDriver(quote: TripQuote) {
     if (!activeTripId) return
+    try {
+      // Kiểm tra quote còn trên RTDB không — tài xế có thể đã hủy trong 5s
+      const still = await rtdb.get(`trips/${activeTripId}/quotes/${quote.driverUid}`)
+      if (!still) {
+        showAlert('Tài xế đã hủy', 'Tài xế này đã hủy báo giá, vui lòng chọn tài xế khác.')
+        setQuotes(prev => prev.filter(q => q.driverUid !== quote.driverUid))
+        return
+      }
+    } catch {}
+
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     try {
       await notifySelectedDriver(activeTripId, quote.driverUid)
@@ -844,6 +858,7 @@ function BookPanel({
             placeholderTextColor="#94A3B8"
             multiline
             numberOfLines={2}
+            maxLength={100}
           />
         </View>
       </ScrollView>
