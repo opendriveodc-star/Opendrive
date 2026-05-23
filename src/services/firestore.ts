@@ -45,6 +45,10 @@ export async function updateDriverFcmToken(uid: string, fcmToken: string): Promi
   await withTimeout(firestoreRest.patch('drivers', uid, { fcmToken, updatedAt: now() }))
 }
 
+export async function setDriverPendingTrip(uid: string, value: boolean): Promise<void> {
+  await withTimeout(firestoreRest.patch('drivers', uid, { pendingTrip: value, updatedAt: now() }))
+}
+
 export async function updateDriverVehicleInfo(
   uid: string,
   fields: { name: string; vehicleType: string; transportModel: string; vehicleBrand: string; vehicleColor: string; licensePlate: string; avatarUrl?: string },
@@ -73,9 +77,27 @@ export async function createMiner(uid: string, phone: string): Promise<void> {
 
 // ─── Blacklist ────────────────────────────────────────────────────────────────
 
-export async function isCustomerBlacklisted(uid: string): Promise<{ blacklisted: boolean; cancelCount?: number }> {
-  const snap = await withTimeout(getDoc(doc(db, 'blacklist_customers', uid)))
-  if (!snap.exists()) return { blacklisted: false }
-  const data = snap.data()
-  return { blacklisted: true, cancelCount: data.cancelCount }
+export async function getCustomerPenalty(phone: string): Promise<{ cancelCount: number; lockedUntil?: number } | null> {
+  const snap = await withTimeout(getDoc(doc(db, 'blacklist_customers', phone)))
+  if (!snap.exists()) return null
+  const d = snap.data()
+  return { cancelCount: d.cancelCount ?? 0, lockedUntil: d.lockedUntil }
+}
+
+// Trả về cancelCount mới sau khi cộng
+export async function incrementCustomerPenalty(phone: string, amount: number): Promise<number> {
+  const snap = await withTimeout(getDoc(doc(db, 'blacklist_customers', phone)))
+  const current = snap.exists() ? (snap.data().cancelCount ?? 0) : 0
+  const newCount = current + amount
+  const ts = now()
+  if (snap.exists()) {
+    await withTimeout(firestoreRest.patch('blacklist_customers', phone, { cancelCount: newCount, updatedAt: ts }))
+  } else {
+    await withTimeout(firestoreRest.patch('blacklist_customers', phone, { phone, cancelCount: newCount, createdAt: ts, updatedAt: ts }))
+  }
+  return newCount
+}
+
+export async function setCustomerLockedUntil(phone: string, lockedUntil: number): Promise<void> {
+  await withTimeout(firestoreRest.patch('blacklist_customers', phone, { lockedUntil, updatedAt: now() }))
 }

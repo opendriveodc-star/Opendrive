@@ -24,7 +24,6 @@ export const WORKER = {
   NOTIFY_DRIVERS:    'https://opendrive-notify-drivers.opendrive-odc.workers.dev',
   NOTIFY_SELECTED:   'https://opendrive-notify-selected.opendrive-odc.workers.dev',
   STELLAR_RECORD:    'https://opendrive-stellar-record.opendrive-odc.workers.dev',
-  TURN_CREDENTIALS:  'https://opendrive-turn-credentials.opendrive-odc.workers.dev',
   CLEANUP_TRIPS:     'https://opendrive-cleanup-trips.opendrive-odc.workers.dev',
   MINING_REPORT:     'https://opendrive-mining-report.opendrive-odc.workers.dev',
   EXCHANGE_POINTS:   'https://opendrive-exchange-points.opendrive-odc.workers.dev',
@@ -65,22 +64,13 @@ export const LOCATION = {
   GEOHASH_MEMO_LENGTH:   8,         // 8 ký tự cho Stellar memo (±19m)
   UPDATE_INTERVAL_MS:    60000,     // cập nhật vị trí mỗi 1 phút
   UPDATE_MIN_DISTANCE_M: 1000,      // chỉ cập nhật khi di chuyển > 1km
-  DATACHANNEL_INTERVAL_MS: 4000,    // gửi vị trí qua DataChannel mỗi 4s
+  RTDB_INTERVAL_MS: 3000,           // gửi vị trí qua RTDB mỗi 3s
 } as const
 
 // OSRM
 export const OSRM = {
   BASE_URL: 'http://router.project-osrm.org/route/v1/driving',
 } as const
-
-// WebRTC ICE config – tạm dùng STUN Google, Worker 5 sẽ cấp TURN credentials
-export const ICE_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-  iceTransportPolicy: 'all',
-}
 
 // Brand color – lấy từ logo Logo_OD.PNG (navy đậm)
 // Toàn app dùng chung 1 tone màu thay vì tách màu theo role

@@ -1,5 +1,4 @@
 // app/(customer)/tracking.tsx
-// Hybrid: WebRTC DataChannel (5s timeout) → RTDB polling fallback
 
 import React, { useEffect, useState, useRef } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
@@ -9,13 +8,19 @@ import { useLocalSearchParams, router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { Ionicons } from '@expo/vector-icons'
 import MapView, { type MapViewHandle } from '../../src/components/MapView'
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 import { TRIP } from '../../src/constants'
-import { createOfferConnection, closePeerConnection } from '../../src/services/webrtc'
 import { rtdb } from '../../src/services/firebase'
-import type { DCLocationMessage, DCStatusMessage, DCTripInfoMessage, DataChannelMessage } from '../../src/types'
+import { distanceKm, getCurrentLocation } from '../../src/services/location'
+import { incrementCustomerPenalty, setCustomerLockedUntil } from '../../src/services/firestore'
+import { SecureStoreKey } from '../../src/types'
+import type { CustomerInfo, TripRealtimeInfo } from '../../src/types'
+
+const RETRY_TRIP_KEY = 'retry_trip_data'
+const LOCK_48H = 48 * 60 * 60 * 1000
 
 const BRAND = '#1A2E5E'
-const WEBRTC_TIMEOUT_MS = 5_000
 
 type TripStatus = 'going_to_pickup' | 'picked_up' | 'completed'
 
@@ -38,13 +43,28 @@ export default function TrackingScreen() {
   const startedAtRef    = useRef<number>(Date.now())
   const mapRef          = useRef<MapViewHandle>(null)
   const completedRef    = useRef(false)
-  const connectedRef    = useRef(false)
-  const usingRtdbRef    = useRef(false)
-  const bridgeRef       = useRef<any | null>(null)
-  const webrtcTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pickupLatRef    = useRef<number | null>(null)
+  const pickupLngRef    = useRef<number | null>(null)
+  const initialDistRef  = useRef<number | null>(null)
+  const driverLatRef    = useRef<number>(10.7769)
+  const driverLngRef    = useRef<number>(106.7009)
+  const tripInfoRef     = useRef<TripRealtimeInfo | null>(null)
+  const driverInfoRef   = useRef<{ name: string; licensePlate: string; vehicleBrand: string } | null>(null)
   const locationPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const statusPollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
   const infoPollRef     = useRef<ReturnType<typeof setInterval> | null>(null)
+  const cancelPollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Load trip info để lấy tọa độ điểm đón
+  useEffect(() => {
+    if (!tripId) return
+    rtdb.get<TripRealtimeInfo>(`trips/${tripId}/info`).then(info => {
+      if (!info) return
+      tripInfoRef.current = info
+      if (info.pickupLat) pickupLatRef.current = info.pickupLat
+      if (info.pickupLng) pickupLngRef.current = info.pickupLng
+    }).catch(() => {})
+  }, [tripId])
 
   // Grace period
   useEffect(() => {
@@ -57,46 +77,9 @@ export default function TrackingScreen() {
     return () => clearInterval(check)
   }, [])
 
-  // WebRTC + fallback 5s
+  // RTDB polling: vị trí + status + trip_info
   useEffect(() => {
     if (!tripId) return
-    let mounted = true
-
-    async function initWebRTC() {
-      try {
-        const bridge = await createOfferConnection(
-          tripId,
-          handleDataChannelMessage,
-          () => {
-            if (!mounted) return
-            connectedRef.current = true
-            if (webrtcTimerRef.current) { clearTimeout(webrtcTimerRef.current); webrtcTimerRef.current = null }
-          },
-        )
-        bridgeRef.current = bridge
-      } catch {
-        if (mounted) activateRtdb()
-      }
-    }
-
-    initWebRTC()
-
-    webrtcTimerRef.current = setTimeout(() => {
-      if (!connectedRef.current) activateRtdb()
-    }, WEBRTC_TIMEOUT_MS)
-
-    return () => {
-      mounted = false
-      if (webrtcTimerRef.current) clearTimeout(webrtcTimerRef.current)
-      clearRtdbPolls()
-      bridgeRef.current?.stop()
-      closePeerConnection(tripId)
-    }
-  }, [tripId])
-
-  function activateRtdb() {
-    if (usingRtdbRef.current || !tripId) return
-    usingRtdbRef.current = true
 
     locationPollRef.current = setInterval(async () => {
       try {
@@ -104,8 +87,13 @@ export default function TrackingScreen() {
         if (loc?.lat != null) {
           setDriverLat(loc.lat)
           setDriverLng(loc.lng)
+          driverLatRef.current = loc.lat
+          driverLngRef.current = loc.lng
           mapRef.current?.updateDriverMarker(loc.lat, loc.lng)
           mapRef.current?.panTo(loc.lat, loc.lng)
+          if (initialDistRef.current === null && pickupLatRef.current && pickupLngRef.current) {
+            initialDistRef.current = distanceKm(loc.lat, loc.lng, pickupLatRef.current, pickupLngRef.current)
+          }
         }
       } catch {}
     }, 3000)
@@ -114,10 +102,38 @@ export default function TrackingScreen() {
       try {
         const status = await rtdb.get<string>(`trips/${tripId}/trip_status`)
         if (status === 'picked_up') setTripStatus('picked_up')
-        if (status === 'completed' && !completedRef.current) {
+        if (status === 'completed' && !completedRef.current) navigateToRating()
+      } catch {}
+    }, 3000)
+
+    cancelPollRef.current = setInterval(async () => {
+      if (completedRef.current) return
+      try {
+        const cancelled = await rtdb.get<string>(`trips/${tripId}/cancelled`)
+        if (cancelled === 'driver') {
           completedRef.current = true
-          clearRtdbPolls()
-          router.replace({ pathname: '/(customer)/rating', params: { tripId } })
+          clearAllPolls()
+          showAlert(t('cancel.driverCancelled'), undefined, [{
+            text: 'OK',
+            onPress: async () => {
+              const info = tripInfoRef.current
+              if (info) {
+                await AsyncStorage.setItem(RETRY_TRIP_KEY, JSON.stringify({
+                  vehicleType:   info.vehicleType,
+                  pickupLat:     info.pickupLat,
+                  pickupLng:     info.pickupLng,
+                  pickupAddress: info.pickupAddress ?? '',
+                  dropLat:       info.dropLat,
+                  dropLng:       info.dropLng,
+                  destAddress:   info.destAddress ?? '',
+                  note:          info.note ?? '',
+                  estimatedKm:   info.estimatedKm,
+                })).catch(() => {})
+              }
+              rtdb.delete(`trips/${tripId}`).catch(() => {})
+              router.replace('/(customer)/home')
+            },
+          }])
         }
       } catch {}
     }, 3000)
@@ -126,46 +142,118 @@ export default function TrackingScreen() {
       try {
         const info = await rtdb.get<{ driverName: string; licensePlate: string; vehicleBrand: string }>(`trips/${tripId}/trip_info`)
         if (info?.driverName) {
-          setDriverInfo({ name: info.driverName, licensePlate: info.licensePlate, vehicleBrand: info.vehicleBrand })
+          const di = { name: info.driverName, licensePlate: info.licensePlate, vehicleBrand: info.vehicleBrand }
+          setDriverInfo(di)
+          driverInfoRef.current = di
           if (infoPollRef.current) { clearInterval(infoPollRef.current); infoPollRef.current = null }
         }
       } catch {}
     }
     tryGetTripInfo()
     infoPollRef.current = setInterval(tryGetTripInfo, 5000)
-  }
 
-  function clearRtdbPolls() {
+    return () => clearAllPolls()
+  }, [tripId])
+
+  function clearAllPolls() {
     if (locationPollRef.current) { clearInterval(locationPollRef.current); locationPollRef.current = null }
     if (statusPollRef.current)   { clearInterval(statusPollRef.current);   statusPollRef.current   = null }
     if (infoPollRef.current)     { clearInterval(infoPollRef.current);     infoPollRef.current     = null }
+    if (cancelPollRef.current)   { clearInterval(cancelPollRef.current);   cancelPollRef.current   = null }
   }
 
-  function handleDataChannelMessage(msg: DataChannelMessage) {
-    if (msg.type === 'location') {
-      const m = msg as DCLocationMessage
-      setDriverLat(m.lat)
-      setDriverLng(m.lng)
-      mapRef.current?.updateDriverMarker(m.lat, m.lng)
-      mapRef.current?.panTo(m.lat, m.lng)
-    } else if (msg.type === 'status') {
-      const m = msg as DCStatusMessage
-      if (m.status === 'picked_up') setTripStatus('picked_up')
-      if (m.status === 'completed' && !completedRef.current) {
-        completedRef.current = true
-        router.replace({ pathname: '/(customer)/rating', params: { tripId: tripId ?? '' } })
-      }
-    } else if (msg.type === 'trip_info') {
-      const m = msg as DCTripInfoMessage
-      setDriverInfo({ name: m.driverName, licensePlate: m.licensePlate, vehicleBrand: m.vehicleBrand })
-    }
+  function navigateToRating() {
+    if (completedRef.current) return
+    completedRef.current = true
+    clearAllPolls()
+    router.replace({
+      pathname: '/(customer)/rating',
+      params: {
+        tripId,
+        pickupAddress: tripInfoRef.current?.pickupAddress ?? '',
+        destAddress:   tripInfoRef.current?.destAddress ?? '',
+        estimatedKm:   String(tripInfoRef.current?.estimatedKm ?? 0),
+        vehicleType:   tripInfoRef.current?.vehicleType ?? '',
+        driverName:    driverInfoRef.current?.name ?? '',
+        vehicleBrand:  driverInfoRef.current?.vehicleBrand ?? '',
+        licensePlate:  driverInfoRef.current?.licensePlate ?? '',
+      },
+    })
   }
+
+  // Khi đã lên xe, kiểm tra vị trí khách mỗi 5s – hiện bảng đánh giá khi còn ≤100m đến điểm đến
+  useEffect(() => {
+    if (tripStatus !== 'picked_up') return
+
+    const check = setInterval(async () => {
+      if (completedRef.current) { clearInterval(check); return }
+      const dropLat = tripInfoRef.current?.dropLat
+      const dropLng = tripInfoRef.current?.dropLng
+      if (!dropLat || !dropLng) return
+      try {
+        const loc  = await getCurrentLocation()
+        const dist = distanceKm(loc.lat, loc.lng, dropLat, dropLng)
+        if (dist <= 0.1) {
+          clearInterval(check)
+          navigateToRating()
+        }
+      } catch {}
+    }, 5000)
+
+    return () => clearInterval(check)
+  }, [tripStatus])
 
   function handleCancel() {
     showAlert(t('cancel.title'), t('cancel.confirm'), [
       { text: t('cancel.no'), style: 'cancel' },
-      { text: t('cancel.yes'), style: 'destructive', onPress: () => router.replace('/(customer)/home') },
+      {
+        text: t('cancel.yes'), style: 'destructive',
+        onPress: async () => {
+          clearRtdbPolls()
+          bridgeRef.current?.stop()
+          if (tripId) await rtdb.set(`trips/${tripId}/cancelled`, 'customer').catch(() => {})
+
+          // Tính penalty
+          const penaltyAmount = _calcCancelPenalty()
+          if (penaltyAmount > 0) await _applyCustomerPenalty(penaltyAmount)
+
+          router.replace('/(customer)/home')
+        },
+      },
     ])
+  }
+
+  function _calcCancelPenalty(): number {
+    if (tripStatus === 'picked_up') return 0  // đã lên xe, không thể hủy
+    if (!pickupLatRef.current || !pickupLngRef.current) return 0
+    // Tài xế đã ở điểm đón (trong vòng 300m) → phạt 2
+    const currentDist = distanceKm(driverLatRef.current, driverLngRef.current, pickupLatRef.current, pickupLngRef.current)
+    if (currentDist <= 0.3) return 2
+    // Tài xế đã đi >50% quãng đường đến đón → phạt 1
+    const init = initialDistRef.current
+    if (init && init > 0 && (init - currentDist) / init > 0.5) return 1
+    return 0
+  }
+
+  async function _applyCustomerPenalty(amount: number) {
+    try {
+      const raw = await SecureStore.getItemAsync(SecureStoreKey.CUSTOMER_INFO)
+      if (!raw) return
+      const info: CustomerInfo = JSON.parse(raw)
+      const newCount = await incrementCustomerPenalty(info.phone, amount)
+      const updated = { ...info, cancelCount: newCount }
+      await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_INFO, JSON.stringify(updated))
+      if (newCount >= 3) {
+        const lockUntil = Date.now() + LOCK_48H
+        await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL, String(lockUntil))
+        setCustomerLockedUntil(info.phone, lockUntil).catch(() => {})
+        showAlert(
+          t('lock.title'),
+          t('lock.reason.frequentCancel'),
+          [{ text: 'OK', onPress: () => router.replace({ pathname: '/lock-screen', params: { lockedUntil: String(lockUntil), reason: t('lock.reason.frequentCancel') } }) }],
+        )
+      }
+    } catch {}
   }
 
   const statusCfg = STATUS_CONFIG[tripStatus]

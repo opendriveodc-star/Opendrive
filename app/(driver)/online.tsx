@@ -16,13 +16,12 @@ import { useTranslation } from 'react-i18next'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { rtdb } from '../../src/services/firebase'
 import * as ExpoLocation from 'expo-location'
-import { updateDriverStatus, updateDriverLocation } from '../../src/services/firestore'
+import { updateDriverStatus, updateDriverLocation, setDriverPendingTrip } from '../../src/services/firestore'
 import { getCurrentLocation, distanceKm, geohashForQuery } from '../../src/services/location'
 import { LOCATION } from '../../src/constants'
 import { hasEnoughODC, getODCBalance } from '../../src/services/odc'
 import { maskPhone } from '../../src/utils/format'
 import { savePendingTrip } from '../../src/utils/storage'
-import { prefetchTurnCredentials } from '../../src/services/webrtc'
 import MapView from '../../src/components/MapView'
 import type { MapViewHandle } from '../../src/components/MapView'
 import {
@@ -32,9 +31,9 @@ import {
 } from '../../src/types'
 
 const { height: SCREEN_H } = Dimensions.get('window')
-const SHEET_HEIGHT      = Math.round(SCREEN_H * 0.44) + 7
-const COLLAPSED_Y       = SHEET_HEIGHT - 60   // ngang vạch phân cách header/list
-const VISIBLE_COLLAPSED = SHEET_HEIGHT - COLLAPSED_Y  // = 60
+const L1_VISIBLE_H  = Math.round(SCREEN_H * 0.44) + 7  // chiều cao hiển thị ở level 1
+const HEADER_H      = 82   // chiều cao header card (không tính safe area)
+const L2_GAP        = 120  // khoảng cách từ đáy header đến đỉnh sheet ở level 2
 const BRAND         = '#1A2E5E'
 const BRAND_LIGHT   = '#E8EDF6'
 
@@ -49,11 +48,24 @@ interface TripCard {
   autoQuoted: boolean
 }
 
+function isPeakHour(s: AutoQuoteSettings): boolean {
+  if (!s.peakHourEnabled) return false
+  const now = new Date()
+  const cur = now.getHours() * 60 + now.getMinutes()
+  const [sh, sm] = (s.peakHourStart ?? '00:00').split(':').map(Number)
+  const [eh, em] = (s.peakHourEnd   ?? '00:00').split(':').map(Number)
+  const start = sh * 60 + sm
+  const end   = eh * 60 + em
+  // hỗ trợ khung qua đêm (vd: 22:00 → 05:00)
+  return start <= end ? (cur >= start && cur <= end) : (cur >= start || cur <= end)
+}
+
 function calcAutoPrice(info: TripRealtimeInfo, s: AutoQuoteSettings): number {
   const km    = info.estimatedKm ?? 0
   const extra = Math.max(0, km - s.baseKm) * s.pricePerKm
   let price   = s.basePrice + extra
   if (s.rainModeEnabled) price *= s.rainMultiplier
+  if (isPeakHour(s))     price *= s.peakHourMultiplier
   return Math.round(price / 1000) * 1000
 }
 
@@ -70,7 +82,7 @@ export default function OnlineScreen() {
   const [mapInit,      setMapInit]      = useState<{ lat: number; lng: number } | null>(null)
   const [trips,        setTrips]        = useState<TripCard[]>([])
   const [autoSettings, setAutoSettings] = useState<AutoQuoteSettings>(DEFAULT_AUTO_QUOTE_SETTINGS)
-  const [sheetOpen,    setSheetOpen]    = useState(false)
+  const [sheetLevel,   setSheetLevel]   = useState<0|1|2>(0)
   const [quotingTripId, setQuotingTripId] = useState<string | null>(null)
   const [quotingPrice,  setQuotingPrice]  = useState('')
 
@@ -80,14 +92,30 @@ export default function OnlineScreen() {
   const lastPosRef          = useRef<{ lat: number; lng: number } | null>(null)
   const activeMarkerTripRef = useRef<string | null>(null)
   const processingTrips = useRef<Set<string>>(new Set())
-  const sheetOpenRef    = useRef(false)
+  const sheetLevelRef   = useRef<0|1|2>(0)
+  const mountDone       = useRef(false)
+
+  // Snap points – tính sau khi có insets
+  const sheetHRef = useRef(SCREEN_H)   // chiều cao thực của sheet
+  const l0YRef    = useRef(SCREEN_H - 60)
+  const l1YRef    = useRef(SCREEN_H - L1_VISIBLE_H)
+  const [sheetH,  setSheetH]  = useState(SCREEN_H)
 
   // Sheet animation – bắt đầu ngoài màn hình, trượt vào sau mount
-  const sheetAnim = useRef(new Animated.Value(SHEET_HEIGHT)).current
+  const sheetAnim = useRef(new Animated.Value(SCREEN_H)).current
 
-  useEffect(() => { odcBalanceRef.current = odcBalance   }, [odcBalance])
-  useEffect(() => { autoSettingsRef.current = autoSettings }, [autoSettings])
-  useEffect(() => { sheetOpenRef.current = sheetOpen }, [sheetOpen])
+  useEffect(() => { odcBalanceRef.current   = odcBalance    }, [odcBalance])
+  useEffect(() => { autoSettingsRef.current = autoSettings  }, [autoSettings])
+  useEffect(() => { sheetLevelRef.current   = sheetLevel    }, [sheetLevel])
+
+  // Tính lại snap points khi insets thay đổi
+  useEffect(() => {
+    const h = Math.max(300, SCREEN_H - insets.bottom - (insets.top + HEADER_H + L2_GAP))
+    sheetHRef.current = h
+    setSheetH(h)
+    l0YRef.current = h - 60
+    l1YRef.current = Math.max(0, h - L1_VISIBLE_H)
+  }, [insets.top, insets.bottom])
 
   // Reload settings mỗi khi quay lại màn hình (từ Settings)
   useFocusEffect(
@@ -101,52 +129,102 @@ export default function OnlineScreen() {
     }, [])
   )
 
-  // PanResponder cho handle – kéo lên/xuống hoặc tap để toggle
+  // PanResponder cho handle – kéo lên/xuống, 3 snap points
   const handlePan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder:  (_, gs) => Math.abs(gs.dy) > 6,
       onPanResponderGrant: () => { sheetAnim.stopAnimation() },
       onPanResponderMove: (_, gs) => {
-        const base = sheetOpenRef.current ? 0 : COLLAPSED_Y
-        const next = Math.max(0, Math.min(COLLAPSED_Y, base + gs.dy))
+        const base = sheetLevelRef.current === 0 ? l0YRef.current
+                   : sheetLevelRef.current === 1 ? l1YRef.current
+                   : 0
+        const next = Math.max(0, Math.min(l0YRef.current, base + gs.dy))
         sheetAnim.setValue(next)
       },
       onPanResponderRelease: (_, gs) => {
+        const lv = sheetLevelRef.current
         if (Math.abs(gs.dy) < 6 && Math.abs(gs.dx) < 6) {
-          // tap
-          sheetOpenRef.current ? closeSheet() : openSheet()
+          if (lv === 0)      openSheet()
+          else if (lv === 1) expandSheet()
+          else               closeSheet()
         } else if (gs.dy < -20 || gs.vy < -0.3) {
-          openSheet()
-        } else {
-          closeSheet()
+          if (lv === 0)      openSheet()
+          else               expandSheet()
+        } else if (gs.dy > 20 || gs.vy > 0.3) {
+          if (lv === 2)      openSheet()
+          else               closeSheet()
         }
       },
     })
   ).current
 
-  // Trượt panel vào sau khi mount xong
+  // Trượt panel vào sau khi insets sẵn sàng (chỉ 1 lần)
   useEffect(() => {
+    if (mountDone.current || insets.top === 0) return
+    mountDone.current = true
+    sheetAnim.setValue(sheetHRef.current + 80)
     Animated.timing(sheetAnim, {
-      toValue: COLLAPSED_Y,
+      toValue: l0YRef.current,
       duration: 320,
       useNativeDriver: true,
       easing: Easing.out(Easing.cubic),
     }).start()
-  }, [])
+  }, [insets.top])
+
+  // Navigate rời màn hình – về home dùng back() để slide animation chạy sạch
+  function navigateAway(path: string) {
+    if (path === '/(driver)/home') {
+      router.back()
+    } else {
+      Animated.timing(sheetAnim, {
+        toValue: sheetHRef.current + 80,
+        duration: 220,
+        useNativeDriver: true,
+        easing: Easing.in(Easing.cubic),
+      }).start(() => router.replace(path as any))
+    }
+  }
 
   // Auto-expand sheet khi có chuyến mới
   useEffect(() => {
-    if (trips.length > 0 && !sheetOpen) {
+    if (trips.length > 0 && sheetLevel === 0) {
       openSheet()
-    } else if (trips.length === 0 && sheetOpen) {
+    } else if (trips.length === 0 && sheetLevel > 0) {
       closeSheet()
     }
   }, [trips.length])
 
+  // Tính padding MapLibre theo level sheet hiện tại
+  function visiblePad(level: 0|1|2) {
+    return {
+      top:    insets.top + HEADER_H,
+      bottom: level === 0 ? 60 + insets.bottom
+            : level === 1 ? L1_VISIBLE_H + insets.bottom
+            : sheetHRef.current + insets.bottom,
+    }
+  }
+
   function openSheet() {
-    setSheetOpen(true)
-    mapRef.current?.setPadding(insets.top + 82, SHEET_HEIGHT)
+    setSheetLevel(1)
+    sheetLevelRef.current = 1
+    const { top, bottom } = visiblePad(1)
+    const last = lastPosRef.current
+    if (last) mapRef.current?.panTo(last.lat, last.lng, top, bottom)
+    Animated.timing(sheetAnim, {
+      toValue: l1YRef.current,
+      duration: 280,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
+    }).start()
+  }
+
+  function expandSheet() {
+    setSheetLevel(2)
+    sheetLevelRef.current = 2
+    const { top, bottom } = visiblePad(2)
+    const last = lastPosRef.current
+    if (last) mapRef.current?.panTo(last.lat, last.lng, top, bottom)
     Animated.timing(sheetAnim, {
       toValue: 0,
       duration: 280,
@@ -156,10 +234,13 @@ export default function OnlineScreen() {
   }
 
   function closeSheet() {
-    setSheetOpen(false)
-    mapRef.current?.setPadding(0, VISIBLE_COLLAPSED + 8)
+    setSheetLevel(0)
+    sheetLevelRef.current = 0
+    const { top, bottom } = visiblePad(0)
+    const last = lastPosRef.current
+    if (last) mapRef.current?.panTo(last.lat, last.lng, top, bottom)
     Animated.timing(sheetAnim, {
-      toValue: COLLAPSED_Y,
+      toValue: l0YRef.current,
       duration: 250,
       useNativeDriver: true,
       easing: Easing.out(Easing.cubic),
@@ -167,7 +248,7 @@ export default function OnlineScreen() {
   }
 
   function toggleSheet() {
-    sheetOpen ? closeSheet() : openSheet()
+    sheetLevel === 0 ? openSheet() : closeSheet()
   }
 
   // ── Init ────────────────────────────────────────────────────────────────────
@@ -181,14 +262,28 @@ export default function OnlineScreen() {
     setDriverName(info.name)
     setDriverRating(info.rating)
 
-    prefetchTurnCredentials()
 
-    const balance = await getODCBalance(info.stellarWallet).catch(() => 0)
+    // Render map NGAY – ưu tiên: cached GPS → AsyncStorage → default VN center
+    let initLat = 10.7769, initLng = 106.7009   // fallback: TP.HCM
+    try {
+      const stored = await AsyncStorage.getItem('last_gps_pos')
+      if (stored) { const p = JSON.parse(stored); initLat = p.lat; initLng = p.lng }
+    } catch {}
+    try {
+      const last = await ExpoLocation.getLastKnownPositionAsync()
+      if (last) { initLat = last.coords.latitude; initLng = last.coords.longitude }
+    } catch {}
+    setMapInit({ lat: initLat, lng: initLng })
+    lastPosRef.current = { lat: initLat, lng: initLng }
+
+    // Các tác vụ mạng chạy song song – không block map
+    const [balance, settingsRaw] = await Promise.all([
+      getODCBalance(info.stellarWallet).catch(() => 0),
+      AsyncStorage.getItem(AsyncStorageKey.AUTO_QUOTE_SETTINGS),
+    ])
     setOdcBalance(balance)
 
-    const settingsRaw = await AsyncStorage.getItem(AsyncStorageKey.AUTO_QUOTE_SETTINGS)
     if (settingsRaw) {
-      // rainModeEnabled reset về false mỗi lần mở app (chỉ autoQuoteEnabled mới lưu)
       const s = { ...JSON.parse(settingsRaw) as AutoQuoteSettings, rainModeEnabled: false }
       setAutoSettings(s)
       autoSettingsRef.current = s
@@ -198,11 +293,14 @@ export default function OnlineScreen() {
     // Đảm bảo Firestore luôn sync status=ready khi vào màn này
     updateDriverStatus(info.uid, 'ready').catch(e => console.error('[online] updateDriverStatus failed:', JSON.stringify(e)))
 
+    // GPS chính xác trong nền – dùng panTo thay vì setMapInit để tránh re-render
     try {
       const { lat, lng } = await getCurrentLocation()
-      setMapInit({ lat, lng })
       lastPosRef.current = { lat, lng }
-      updateDriverLocation(info.uid, geohashForQuery(lat, lng)).catch(e => console.error('[online] updateDriverLocation failed:', JSON.stringify(e)))
+      const { top, bottom } = visiblePad(sheetLevelRef.current)
+      mapRef.current?.panTo(lat, lng, top, bottom)
+      updateDriverLocation(info.uid, geohashForQuery(lat, lng)).catch(() => {})
+      AsyncStorage.setItem('last_gps_pos', JSON.stringify({ lat, lng })).catch(() => {})
     } catch {}
 
     if (pendingExpandRef.current) {
@@ -324,6 +422,8 @@ export default function OnlineScreen() {
       ratingCount:  drv.ratingCount,
       quotedPrice:  price,
       createdAt:    Date.now(),
+      driverLat:    lastPosRef.current?.lat,
+      driverLng:    lastPosRef.current?.lng,
     }
     await rtdb.set(`trips/${tripId}/quotes/${drv.uid}`, quote)
   }
@@ -408,6 +508,7 @@ export default function OnlineScreen() {
       }
       console.log('[selected] savePendingTrip...')
       await savePendingTrip(pending)
+      setDriverPendingTrip(drv.uid, true).catch(() => {})
       console.log('[selected] updateDriverStatus busy...')
       await updateDriverStatus(drv.uid, 'busy')
       await SecureStore.setItemAsync(
@@ -415,7 +516,7 @@ export default function OnlineScreen() {
         JSON.stringify({ ...drv, status: 'busy' as DriverStatus }),
       )
       console.log('[selected] navigate trip...')
-      router.replace('/(driver)/trip')
+      navigateAway('/(driver)/trip')
     } catch (e) {
       console.log('[selected] ERROR:', String(e))
       showAlert(t('common.error'), t('error.serverError'))
@@ -432,8 +533,7 @@ export default function OnlineScreen() {
         SecureStoreKey.DRIVER_INFO,
         JSON.stringify({ ...drv, status: 'offline' as DriverStatus }),
       )
-      await new Promise(r => setTimeout(r, 400))
-      router.replace('/(driver)/home')
+      navigateAway('/(driver)/home')
     } catch {
       showAlert(t('common.error'), t('error.serverError'))
     }
@@ -479,7 +579,7 @@ export default function OnlineScreen() {
         {/* Hàng 1: mã chuyến - khoảng cách + giá */}
         <View style={styles.cardIdRow}>
           <View style={styles.cardIdLeft}>
-            <Ionicons name="document-text-outline" size={12} color={BRAND} />
+            <View style={styles.hashBadge}><Text style={styles.hashText}>#</Text></View>
             <Text style={styles.cardId} numberOfLines={1}>
               {shortId}
               <Text style={styles.cardIdLabel}> - </Text>
@@ -546,7 +646,7 @@ export default function OnlineScreen() {
             ref={mapRef}
             lat={mapInit.lat}
             lng={mapInit.lng}
-            onMapReady={() => mapRef.current?.setBottomPadding(VISIBLE_COLLAPSED + 8)}
+            onMapReady={() => mapRef.current?.setBottomPadding(68)}
           />
         )}
       </View>
@@ -593,7 +693,7 @@ export default function OnlineScreen() {
         <View
           style={[
             styles.quotingOverlay,
-            { top: Math.round((insets.top + 82 + SCREEN_H - SHEET_HEIGHT - insets.bottom - 200) / 2) },
+            { top: Math.round((insets.top + HEADER_H + L2_GAP + (SCREEN_H - insets.bottom - (insets.top + HEADER_H + L2_GAP)) / 2) - 100) },
           ]}
           pointerEvents="box-none"
         >
@@ -626,22 +726,11 @@ export default function OnlineScreen() {
         </View>
       )}
 
-      {/* Nút định vị */}
-      <TouchableOpacity
-        style={[styles.locateBtn, { top: insets.top + 80 }]}
-        onPress={() => {
-          const last = lastPosRef.current
-          if (last) mapRef.current?.panTo(last.lat, last.lng)
-        }}
-      >
-        <Ionicons name="locate" size={18} color={BRAND} />
-      </TouchableOpacity>
-
       {/* Bottom sheet – danh sách chuyến */}
       <Animated.View
         style={[
           styles.sheet,
-          { bottom: insets.bottom },
+          { bottom: insets.bottom, height: sheetH },
           { transform: [{ translateY: sheetAnim }] },
         ]}
       >
@@ -692,6 +781,19 @@ export default function OnlineScreen() {
           }
         />
       </Animated.View>
+
+      {/* Nút định vị – render SAU sheet để luôn nổi lên trên */}
+      <TouchableOpacity
+        style={[styles.locateBtn, { top: insets.top + 80 }]}
+        onPress={() => {
+          const last = lastPosRef.current
+          if (!last) return
+          const { top, bottom } = visiblePad(sheetLevelRef.current)
+          mapRef.current?.panTo(last.lat, last.lng, top, bottom)
+        }}
+      >
+        <Ionicons name="locate" size={18} color={BRAND} />
+      </TouchableOpacity>
     </KeyboardAvoidingView>
   )
 }
@@ -825,7 +927,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 6,
-    elevation: 8,
+    elevation: 25,
   },
   offlineBtn: {
     flexDirection: 'row',
@@ -847,7 +949,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    height: SHEET_HEIGHT,
     backgroundColor: '#fff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -1028,6 +1129,12 @@ const styles = StyleSheet.create({
     gap: 5,
     flexShrink: 1,
   },
+  hashBadge: {
+    width: 14, height: 14, borderRadius: 3,
+    backgroundColor: BRAND,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  hashText: { fontSize: 9, fontWeight: '800', color: '#fff', lineHeight: 14 },
   cardIdRight: {
     flexDirection: 'row',
     alignItems: 'center',

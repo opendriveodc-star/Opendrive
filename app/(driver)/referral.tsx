@@ -24,7 +24,7 @@ export default function ReferralScreen() {
 
   useEffect(() => { getDriverInfo().then(setDriverInfo) }, [])
 
-  const referralCode = driverInfo?.uid ? driverInfo.uid.slice(0, 8).toUpperCase() : ''
+  const referralCode = driverInfo?.uid ?? ''
 
   async function copyCode() {
     if (!referralCode) return
@@ -99,8 +99,6 @@ export default function ReferralScreen() {
           </View>
           <InfoRow icon="checkmark-circle-outline"
             text={t('referral.rule1') ?? `Giới thiệu 1 tài xế mới = +${ODC.REFERRAL_BONUS} ODC khi họ hoàn thành chuyến đầu`} />
-          <InfoRow icon="checkmark-circle-outline"
-            text={t('referral.rule2') ?? `Tài xế mới dùng mã của bạn sẽ nhận +${ODC.SIGNUP_BONUS} ODC khi đăng ký`} />
         </View>
 
       </ScrollView>
@@ -126,7 +124,7 @@ const styles = StyleSheet.create({
   codeCard:  { backgroundColor: BRAND, borderRadius: 18, padding: 24, alignItems: 'center', marginBottom: 16, shadowColor: BRAND, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 8 },
   codeIconWrap: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   codeHint:  { fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 4 },
-  codeText:  { fontSize: 32, fontWeight: '800', color: '#fff', letterSpacing: 4, marginBottom: 20 },
+  codeText:  { fontSize: 14, fontWeight: '800', color: '#fff', letterSpacing: 1, marginBottom: 20, textAlign: 'center' },
   codeBtns:  { flexDirection: 'row', gap: 10, width: '100%' },
   copyBtn:   { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#fff', paddingVertical: 10, borderRadius: 10 },
   copyBtnText: { fontSize: 14, fontWeight: '600', color: BRAND },

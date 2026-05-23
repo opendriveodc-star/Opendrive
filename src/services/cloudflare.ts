@@ -11,7 +11,6 @@ import type {
   NotifySelectedDriverRequest,
   StellarRecordRequest,
   StellarRecordResponse,
-  TurnCredentials,
   VehicleType,
 } from '../types'
 
@@ -94,13 +93,6 @@ export async function recordTrip(payload: StellarRecordRequest): Promise<Stellar
     body:   JSON.stringify(payload),
   })
   if (!res.success || !res.data) throw new Error(res.error ?? 'stellar-record failed')
-  return res.data
-}
-
-// Worker 5: Lấy TURN credentials cho WebRTC
-export async function getTurnCredentials(): Promise<TurnCredentials> {
-  const res = await workerFetch<TurnCredentials>(WORKER.TURN_CREDENTIALS)
-  if (!res.success || !res.data) throw new Error(res.error ?? 'turn-credentials failed')
   return res.data
 }
 

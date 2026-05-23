@@ -60,11 +60,22 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /blacklist_customers/{uid} {
+    match /blacklist_customers/{phone} {
       // Tài xế đọc được để kiểm tra khách trước khi nhận chuyến
       allow read: if isDriver();
-      // Chỉ Admin SDK (Worker) mới được ghi
-      allow write: if false;
+      // Client tạo mới (lần đầu bị phạt)
+      allow create: if isLoggedIn()
+        && request.resource.data.phone == phone
+        && request.resource.data.cancelCount is int
+        && request.resource.data.cancelCount >= 1
+        && request.resource.data.cancelCount <= 2;
+      // Client cập nhật: chỉ được tăng cancelCount hoặc set lockedUntil
+      allow update: if isLoggedIn()
+        && request.resource.data.phone == resource.data.phone
+        && request.resource.data.cancelCount >= resource.data.cancelCount
+        && (request.resource.data.cancelCount - resource.data.cancelCount) <= 2;
+      // Chỉ Worker cron mới xóa
+      allow delete: if false;
     }
 
     match /miners/{uid} {

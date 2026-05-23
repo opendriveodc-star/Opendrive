@@ -6,6 +6,7 @@ import {
   SecureStoreKey,
   type DriverInfo,
   type PendingTrip,
+  type PendingPenalty,
   type CustomerInfo,
   type MinerInfo,
   type MinerSession,
@@ -43,6 +44,22 @@ export async function savePendingTrip(trip: PendingTrip): Promise<void> {
 
 export async function clearPendingTrip(): Promise<void> {
   await SecureStore.deleteItemAsync(SecureStoreKey.PENDING_TRIP)
+}
+
+// ─── PendingPenalty ───────────────────────────────────────────────────────────
+
+export async function getPendingPenalty(): Promise<PendingPenalty | null> {
+  const raw = await SecureStore.getItemAsync(SecureStoreKey.PENDING_PENALTY)
+  if (!raw) return null
+  return JSON.parse(raw) as PendingPenalty
+}
+
+export async function savePendingPenalty(p: PendingPenalty): Promise<void> {
+  await SecureStore.setItemAsync(SecureStoreKey.PENDING_PENALTY, JSON.stringify(p))
+}
+
+export async function clearPendingPenalty(): Promise<void> {
+  await SecureStore.deleteItemAsync(SecureStoreKey.PENDING_PENALTY)
 }
 
 // ─── CustomerInfo ─────────────────────────────────────────────────────────────

@@ -4,12 +4,15 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview'
 
 export interface MapViewHandle {
   updateDriverMarker:    (lat: number, lng: number) => void
-  panTo:                 (lat: number, lng: number) => void
+  panTo:                 (lat: number, lng: number, topPad?: number, bottomPad?: number) => void
   setBottomPadding:      (px: number) => void
   setPadding:            (top: number, bottom: number) => void
   showCustomerMarker:    (lat: number, lng: number) => void
   hideCustomerMarker:    () => void
   fitBoundsToMarkers:    (lat1: number, lng1: number, lat2: number, lng2: number, paddingBottom?: number) => void
+  setCrosshairPosition:  (topFrac: number) => void
+  showDriverMarker:      (lat: number, lng: number) => void
+  hideDriverMarker:      () => void
 }
 
 interface MapViewProps {
@@ -32,9 +35,9 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
           true;
         `)
       },
-      panTo(newLat, newLng) {
+      panTo(newLat, newLng, topPad = 0, bottomPad = 0) {
         webViewRef.current?.injectJavaScript(`
-          if (window.panTo) window.panTo(${newLat}, ${newLng});
+          if (window.panTo) window.panTo(${newLat}, ${newLng}, ${topPad}, ${bottomPad});
           true;
         `)
       },
@@ -65,6 +68,24 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
       fitBoundsToMarkers(lat1, lng1, lat2, lng2, paddingBottom) {
         webViewRef.current?.injectJavaScript(`
           if (window.fitBoundsToMarkers) window.fitBoundsToMarkers(${lat1}, ${lng1}, ${lat2}, ${lng2}, ${paddingBottom ?? 90});
+          true;
+        `)
+      },
+      setCrosshairPosition(topFrac) {
+        webViewRef.current?.injectJavaScript(`
+          if (window.setCrosshairPosition) window.setCrosshairPosition(${topFrac});
+          true;
+        `)
+      },
+      showDriverMarker(newLat, newLng) {
+        webViewRef.current?.injectJavaScript(`
+          if (window.showDriverMarker) window.showDriverMarker(${newLat}, ${newLng});
+          true;
+        `)
+      },
+      hideDriverMarker() {
+        webViewRef.current?.injectJavaScript(`
+          if (window.hideDriverMarker) window.hideDriverMarker();
           true;
         `)
       },
@@ -108,6 +129,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
       transition: all 0.15s ease;
     }
     #pin-shadow.moving { width: 7px; height: 3px; opacity: 0.4; }
+    .driver-car-marker { width: 28px; height: 28px; cursor: pointer; }
     ` : `
     .driver-dot {
       width: 15px; height: 15px; background: #1A2E5E;
@@ -158,6 +180,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
     var pinEl    = document.getElementById('picker-pin');
     var shadowEl = document.getElementById('pin-shadow');
     var PIN_TOP_FRAC = ${pinTopFrac};
+    var driverMarker = null;
 
     map.on('movestart', function() {
       pinEl.classList.add('moving');
@@ -174,10 +197,51 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'center', lat: c.lat, lng: c.lng }));
       }
     });
-    window.panTo = function(lat, lng) {
-      var cont    = map.getContainer();
-      var offsetY = cont.clientHeight * (PIN_TOP_FRAC - 0.5);
-      map.flyTo({ center: [lng, lat], zoom: 17, duration: 500, offset: [0, offsetY] });
+
+    window.panTo = function(lat, lng, topPad, bottomPad) {
+      map.flyTo({ center: [lng, lat], zoom: 17, duration: 500,
+        padding: { top: topPad || 0, bottom: bottomPad || 0, left: 0, right: 0 }
+      });
+    };
+
+    window.setCrosshairPosition = function(topFrac) {
+      PIN_TOP_FRAC = topFrac;
+      var topPct = (topFrac * 100).toFixed(2) + '%';
+      pinEl.style.top = topPct;
+      shadowEl.style.top = topPct;
+    };
+
+    window.showDriverMarker = function(lat, lng) {
+      if (driverMarker) { driverMarker.setLngLat([lng, lat]); return; }
+      var el = document.createElement('div');
+      el.className = 'driver-car-marker';
+      el.innerHTML = '<svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="28" height="28" rx="14" fill="#EA580C"/><path d="M20 11H8l-2 5.5V20h1.5v1.5h2.5V20h8v1.5h2.5V20H22v-3.5L20 11zm-2.5 1.5l1 3H9.5l1-3h7zm-9.5 7v-1.5h12V19.5H8z" fill="white"/></svg>';
+      driverMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([lng, lat]).addTo(map);
+    };
+
+    window.hideDriverMarker = function() {
+      if (driverMarker) { driverMarker.remove(); driverMarker = null; }
+    };
+
+    var customerMarkerPicker = null;
+    window.showCustomerMarker = function(lat, lng) {
+      var el = document.createElement('div');
+      el.style.cssText = 'width:20px;height:20px;background:#1A2E5E;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(26,46,94,0.45);';
+      if (customerMarkerPicker) customerMarkerPicker.remove();
+      customerMarkerPicker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([lng, lat]).addTo(map);
+    };
+    window.hideCustomerMarker = function() {
+      if (customerMarkerPicker) { customerMarkerPicker.remove(); customerMarkerPicker = null; }
+    };
+
+    window.fitBoundsToMarkers = function(lat1, lng1, lat2, lng2, pb) {
+      var bounds = new maplibregl.LngLatBounds(
+        [Math.min(lng1, lng2), Math.min(lat1, lat2)],
+        [Math.max(lng1, lng2), Math.max(lat1, lat2)]
+      );
+      map.fitBounds(bounds, { padding: { top: 90, right: 90, bottom: pb || 90, left: 90 }, duration: 800, maxZoom: 16 });
     };
     ` : `
     var el = document.createElement('div');
@@ -188,8 +252,11 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
     window.updateMarkerPosition = function(lat, lng) {
       marker.setLngLat([lng, lat]);
     };
-    window.panTo = function(lat, lng) {
-      map.flyTo({ center: [lng, lat], zoom: 17, duration: 500 });
+    window.panTo = function(lat, lng, topPad, bottomPad) {
+      map.flyTo({
+        center: [lng, lat], zoom: 17, duration: 500,
+        padding: { top: topPad || 0, bottom: bottomPad || 0, left: 0, right: 0 },
+      });
     };
     window.setBottomPadding = function(px) {
       map.easeTo({ padding: { top: 0, bottom: px, left: 0, right: 0 }, duration: 300 });

@@ -6,14 +6,14 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-21 (session 22)
+**Cập nhật lần cuối:** 2026-05-23 (session 27 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
 
 - Config, types, constants, i18n (vi/en), services, hooks, utils ✅
 - Tất cả screens: auth, driver, customer, mining ✅
-- 8 Cloudflare Workers deployed + secrets đầy đủ ✅
+- 9 Cloudflare Workers deployed ✅
 - Firebase Rules deployed, EAS Build APK chạy được ✅
 - Customer home: 5-panel horizontal flow (Vehicle→Pickup→Dest→Book→Quotes) ✅
 - Driver flow: Stack navigation, online screen, settings, wallet, referral ✅
@@ -35,15 +35,90 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - `online.tsx` header ODC: `[wallet icon] ODC / {số}` — đồng nhất với `home.tsx`
   - `history.tsx`: fetch Stellar Horizon payments của ví tài xế, filter memo 27 bytes → lịch sử chuyến + rating
   - `wallet.tsx` (trong Settings): fetch **tất cả** ODC payments → lịch sử giao dịch đầy đủ (thưởng/phạt/phí), link sang history screen
+- **Session 23:** Mining feature + online.tsx polish ✅
+  - **Mining UI** (`app/(mining)/home.tsx`): stats card (điểm + dots phiên), pulsing animation khi đào, progress bar, quảng cáo stub +1 điểm, submit Worker 7
+  - **Worker 7** (`workers/mining-report`): cộng điểm, giới hạn 3 phiên/ngày, deployed ✅
+  - **Worker 8** (`workers/exchange-points`): đổi điểm → ODC từ Distributor, feebump, deployed ✅
+  - **i18n** vi/en: thêm ~15 keys mining (totalPoints, todaySessions, rule1-4, startSession, exchangeSuccess…)
+  - **Bug fixes:** `processPendingPenalty` memo double-encoding, `trip.tsx` btoa double-encode, `PendingTrip` thiếu `pickupLat/pickupLng`
+  - **`online.tsx` polish:** map không giật (getLastKnownPositionAsync + AsyncStorage cache), `navigateAway()` slide panel xuống trước khi navigate, bottom sheet 3-level (handle/partial/expand), nút định vị render sau sheet (`elevation: 25`), `L2_GAP = 120` để sheet không che nút định vị
+- **Session 24:** Anti-fraud + Customer penalty system ✅
+  - **Driver fraud:** Firestore `pendingTrip: boolean` flag trên `drivers/{uid}` — set `true` khi nhận chuyến, set `false` sau blockchain submit. Nếu tài xế xóa data rồi đăng nhập lại mà `pendingTrip=true` → lock 48h từ đầu. Timer chỉ lưu SecureStore (xóa data = tính lại từ đầu — đây là thiết kế có chủ đích)
+  - **Thông báo hủy chuyến** qua RTDB: khách hủy → ghi `trips/{tripId}/cancelled = 'customer'` → tài xế detect trong poll → alert → về online; tài xế hủy → ghi `'driver'` → khách detect → lưu thông tin chuyến vào AsyncStorage `retry_trip_data` → về home với thông tin đã điền sẵn
+  - **Pickup proximity lock** (`trip.tsx`): nút "Đã đến điểm đón" bị khóa cho đến khi tài xế cách điểm đón ≤100m. Kiểm tra mỗi 5s. Hiện khoảng cách còn lại khi chưa đến.
+  - **Dropoff proximity lock** (`trip.tsx`): tương tự, nút "Hoàn thành chuyến" khóa cho đến khi cách điểm đến ≤100m.
+  - **Customer penalty system** (`blacklist_customers/{phone}` dùng phone làm doc ID):
+    - Khách hủy khi tài xế đi được >50% quảng đường → +1 `cancelCount`
+    - Khách hủy khi tài xế đã đến điểm đón (≤300m) → +2
+    - Tài xế hủy tại điểm đón (khách không lên) → +2 vào `cancelCount` của khách
+    - `cancelCount >= 3` → lock 48h (in-session: hiện countdown, không kick; re-auth sau xóa data: check Firestore blacklist trước khi vào)
+    - Khi lock hết hạn: xóa khỏi Firestore blacklist, reset SecureStore
+  - **Worker 9** (`workers/cleanup-blacklist`): cron `0 20 * * *` (3am UTC+7), dọn `blacklist_customers` docs có `updatedAt > 48h` và `lockedUntil` đã qua. Cần `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` trong thư mục worker này.
+  - **Firestore rules** cập nhật: `blacklist_customers/{phone}` — client chỉ được tăng `cancelCount` (max +2 mỗi lần), tài xế có thể đọc, Worker Admin SDK xóa
+  - **`src/types/index.ts`**: `DriverDoc.pendingTrip?: boolean`, `TripRealtimeInfo.cancelled?: 'customer'|'driver'`, `BlacklistCustomerDoc` dùng `phone` thay `uid`
+  - **`src/services/firestore.ts`**: `setDriverPendingTrip()`, `getCustomerPenalty()`, `incrementCustomerPenalty()`, `setCustomerLockedUntil()`
+  - **i18n** vi/en: thêm `cancel.driverCancelled`, `cancel.customerCancelled`, `lock.reason.frequentCancel`
 
-### Bàn giao Session 23 – Bắt đầu từ đây
+- **Session 25:** Auto quote config + Splash + FCM referral + MapView padding + Customer home redesign ✅
+  - **`quote-config.tsx`**: redesign layout label-trái/input-phải, TimePicker modal 24h, % input cho multiplier, sections (Giá cơ bản / Giờ cao điểm / Mưa), `isPeakHour()` hỗ trợ overnight range
+  - **`src/types/index.ts`**: `AutoQuoteSettings` thêm `peakHourEnabled`, `peakHourStart`, `peakHourEnd`
+  - **`online.tsx`**: `isPeakHour()` + `calcAutoPrice()` áp dụng peakHourMultiplier; `visiblePad(level)` + `panTo` dùng MapLibre padding; driver dot luôn ở giữa vùng map trống; `driverLat/driverLng` thêm vào quote khi báo giá
+  - **`app/index.tsx`**: splash screen redesign (logo + tên + slogan + spinning arc), `checkSession` dùng `Promise.all` parallel
+  - **`cloudflare-workers/stellar-record`**: FCM push khi tài xế giới thiệu được thưởng 10 ODC; deployed
+  - **i18n** vi/en: thêm `referral.*` block đầy đủ, `autoQuote.peakEnabled/peakTimeRange/peakFrom/peakTo/sectionBase/sectionPeak/sectionRain`
+  - **`src/components/MapView.tsx`**: thêm `setCrosshairPosition`, `showDriverMarker`, `hideDriverMarker`; picker mode `panTo` dùng padding thay offset; `fitBoundsToMarkers` trong picker mode; CSS `.driver-car-marker`
+  - **`src/components/QuoteList.tsx`**: thêm `onPreview?(quote)` callback — tap card → xem vị trí tài xế; card full-width, giá+đ cùng hàng, màu xe, nút "Chọn" nhỏ dưới giá
+  - **`app/(customer)/home.tsx`**: redesign hoàn toàn:
+    - Panel full-width (hết margin 16px mỗi bên)
+    - Back button trong topBar (thay vì trong panel) cho steps 1-3
+    - Sheet 3 mức (handle/partial/full) với PanResponder
+    - Locate button nổi trên panel cho steps 1-2
+    - Crosshair tự động cập nhật theo level qua `setCrosshairPosition`
+    - Tap card tài xế → `showDriverMarker` + `fitBoundsToMarkers` để xem vị trí tài xế và khách
+    - `TripQuote.driverLat/driverLng` từ `lastPosRef.current` của tài xế lúc báo giá
 
-**Tình trạng:** Flow e2e hoàn chỉnh. UI driver screens đã polish. Wallet + History hoạt động với dữ liệu thật từ Stellar.
+- **Session 26:** Customer home polish + History screen + Rating trigger proximity ✅
+  - **`app/(customer)/home.tsx`** tiếp tục:
+    - TopBar: logout luôn trái, history luôn phải (tất cả steps) — nút nền trắng, icon BRAND
+    - Back button dạng button dài (`backBtnWide`) nằm dưới nút xác nhận trong panel 1-2-3
+    - Bookmark icon nằm trong ô nhập địa chỉ (bên phải TextInput), vòng tròn xanh nhạt
+    - `handleHistory` → navigate sang `/(customer)/history`
+    - Preview driver: gọi thêm `showCustomerMarker(pickup)` để thấy cả 2 điểm khi fitBounds
+  - **`app/(customer)/history.tsx`** — màn hình mới: lịch sử chuyến khách, đọc AsyncStorage `customer_trip_history`, hiện card (ngày giờ, sao, pickup→dest, tài xế, xe, km), empty state
+  - **`app/(customer)/rating.tsx`**: đọc params từ tracking, `saveHistory(rating)` lưu vào AsyncStorage `customer_trip_history` (tối đa 50) khi submit hoặc bỏ qua
+  - **`app/(customer)/tracking.tsx`**:
+    - Thêm `driverInfoRef` mirror state
+    - Pass trip data params sang rating: `pickupAddress`, `destAddress`, `estimatedKm`, `vehicleType`, `driverName`, `vehicleBrand`, `licensePlate`
+    - Tách `navigateToRating()` dùng chung cho status poll và proximity trigger
+    - **Proximity trigger**: khi `tripStatus === 'picked_up'`, poll GPS khách mỗi 5s — nếu ≤100m đến `dropLat/dropLng` → tự hiện bảng đánh giá
+  - **`src/components/QuoteList.tsx`** redesign:
+    - Card full-width (bỏ `paddingHorizontal` list)
+    - Giá + "đ" cùng hàng, `toLocaleString('vi-VN')` (dấu chấm ngàn)
+    - Thêm dòng màu xe (`vehicleColor`)
+    - Nút "Chọn" nhỏ gọn nằm dưới giá (cột phải), bỏ nút dài full-width cũ
+  - **`src/components/MapView.tsx`**: thêm `showCustomerMarker`/`hideCustomerMarker` vào picker mode HTML
+
+- **Session 27:** Driver UX fixes + proximity 100m + Maps notification ✅
+  - **`app/(driver)/history.tsx`**: rating row riêng (icon sao + `driverRating` từ SecureStore) đặt trên stats bar, bỏ tính `avgRating` từ lịch sử; tiêu đề "Lịch sử chuyến" căn giữa (`position: absolute, left:0, right:0`)
+  - **`app/(driver)/referral.tsx`**: bỏ rule2 ("tài xế mới nhận 100 ODC"), mã giới thiệu = full UID (không slice 8 ký tự), `referralCount` đọc từ SecureStore (không fetch Firestore riêng)
+  - **`app/(driver)/home.tsx`**: retry offline status 3 lần với backoff 1.5s; piggyback sync `referralCount` từ Firestore trong `getDriver()` call có sẵn
+  - **`app/index.tsx`**: nếu `info.status === 'ready'` → route thẳng vào `/(driver)/online` (fix tài xế offline vẫn nhận FCM do Firestore status cũ)
+  - **`app/(driver)/online.tsx`**: icon mã chuyến đổi thành `#` nền navy (`hashBadge` 14×14, borderRadius 3)
+  - **`app/(driver)/trip.tsx` + `app/(customer)/tracking.tsx`**: ngưỡng proximity 200m → **100m** (Haversine đường chim bay), cập nhật cả logic `dist <= 0.1` lẫn text alert
+  - **`app/(driver)/trip.tsx`**: persistent local notification khi tài xế mở Google Maps
+    - `navNotifIdRef` lưu notification ID
+    - `dismissNavNotif()` helper dùng chung
+    - `sticky: true` — không thể vuốt bỏ, tap để quay lại app
+    - Tiêu đề context-aware: "📍 Đang đến điểm đón" / "📍 Đang đến điểm đến"
+    - Tự dismiss ở 5 điểm: đến điểm đón (100m), đến điểm đến (100m), hoàn thành chuyến, tài xế hủy, khách hủy
+
+### Bàn giao Session 28 – Bắt đầu từ đây
+
+**Tình trạng:** Driver + Customer flow hoàn chỉnh và ổn định.
 
 ### Việc cần làm tiếp theo
 
 **Bước 7 – Polish & Monetization**
-- [ ] Mining + đổi điểm ← **bắt đầu tại đây**
 - [ ] AdMob interstitial sau khi kết thúc chuyến
 - [ ] Build APK production (EAS reset 01/06/2026)
 - [ ] iOS build (chờ Apple Developer account)
@@ -171,6 +246,7 @@ db.collection("drivers")
 | 6 | Cron 3h sáng UTC+7 | Xóa tripId >24h trên Realtime DB |
 | 7 | POST /api/mining-report | Cộng điểm đào coin vào Firestore miners |
 | 8 | POST /api/exchange-points | Đổi điểm → ODC từ Distributor |
+| 9 | Cron 3h sáng UTC+7 | Dọn blacklist_customers đã hết hạn >48h |
 
 **Secrets:** `STELLAR_ISSUER_PRIVATE_KEY`, `STELLAR_DISTRIBUTOR_PRIVATE_KEY`, `STELLAR_FEEBUMP_PRIVATE_KEY`, `STELLAR_ISSUER_ADDRESS`, `STELLAR_DISTRIBUTOR_ADDRESS`, `STELLAR_TRANSACTION_ADDRESS`, `FIREBASE_SERVICE_ACCOUNT`, `MASTER_ENCRYPTION_KEY`, `CLOUDFLARE_TURN_KEY_ID`
 
@@ -254,15 +330,20 @@ db.collection("drivers")
 
 ### Customer Home (`app/(customer)/home.tsx`)
 - **5 steps:** 0=Vehicle, 1=Pickup, 2=Dest, 3=Book, 4=Quotes
-- **Animation:** `panelX` Animated.Value horizontal slide; `isAnimating` ref guard double-tap; `stepRef` tránh stale closure
-- **QuotesPanel (step 4):** inline, KHÔNG navigate sang `waiting.tsx`; polling 5s×5; `quotesRef` tránh stale closure
-- **`AD_BOTTOM_H = 0`** – tăng ~60 khi bật AdMob → panel tự nhích lên
-- **`PIN_TOP_PCT`** = midpoint giữa `TOP_BAR_H` và `PANEL_TOP_Y` / `SCREEN_H`
-- **Top bar:** logout (trái) + dotsArea (giữa, linh động) + history (phải)
-- **Saved locations:** AsyncStorage key `opendrive_saved_locs`, tối đa 6 (1 GPS cố định + 5 lưu)
-- GPS chip luôn hiện (navy, `locate-outline`), không có nút X
+- **Panel:** full-width (left:0, right:0), `HANDLE_H=52, PARTIAL_H=min(SCREEN_H*0.46,380), FULL_H=SCREEN_H*0.72`
+- **Sheet snap:** `SNAP_Y = {2:0, 1:FULL_H-PARTIAL_H, 0:FULL_H-HANDLE_H}` — PanResponder trên handle area; `snapToLevel(level)` dùng spring animation
+- **panelContent height:** cố định `PARTIAL_H - HANDLE_H` (không flex:1) — confirm button luôn visible ở level 1
+- **Animation:** `panelX` Animated.Value horizontal slide dùng `SCREEN_W` làm unit (full-width); `isAnimating` ref guard
+- **Top bar:** logout ← trái (ALL steps); dots/drag-hint/spinner ← giữa; history ← phải (ALL steps, trừ steps 1-2 → bookmark)
+- **Top bar button style:** `backgroundColor: '#fff'`, shadow BRAND, icon BRAND — giống chuẩn các màn hình khác
+- **Back button:** button dài (`backBtnWide`, border xám nhạt) nằm dưới nút xác nhận trong panel 1-2-3
+- **Bookmark:** icon trong ô TextInput (bên phải), vòng tròn `#E8EDF6`, gọi `openSaveModal`
+- **Locate button:** floating absolute, `bottom: PARTIAL_H + 16`, chỉ hiện ở steps 1-2
+- **MapView padding:** `visiblePad(level)` = `{top: insets.top+50, bottom: panelH+insets.bottom}`; `panTo()` truyền padding; `setCrosshairPosition(topFrac)` update crosshair khi level thay đổi
+- **Driver marker (step 4):** tap card → `handlePreviewDriver` → `showDriverMarker` + `fitBoundsToMarkers`; `TripQuote.driverLat/driverLng` từ `lastPosRef` của tài xế lúc báo giá
+- **Saved locations:** AsyncStorage key `opendrive_saved_locs`, tối đa 6 (KHÔNG còn GPS chip — thay bằng locate button nổi)
 - Autocomplete: `searchAddresses()` debounce 600ms, tối đa 4 gợi ý
-- Save modal: `justifyContent: 'flex-start'` + `paddingTop: TOP_BAR_H + 48`
+- Save modal: `paddingTop: 120` (thay hardcode TOP_BAR_H)
 
 ### Firestore & Network
 - **`withTimeout(20000)`** bọc tất cả Firestore ops
@@ -330,7 +411,7 @@ db.collection("drivers")
 - Card `headerCard`: `elevation: 0` trên Android, dùng `borderWidth: 1` thay thế
 - Responsive: `const isSmall = SCREEN_H < 750` để điều chỉnh size/spacing trên màn nhỏ
 - Button animation: dùng `scaleAnim` (scale bounce 0.88→1) thay spin arc — tránh conditional render gây jank
-- Map pin nhảy lúc đầu (online screen): known issue, chưa fix — GPS load sau khi map render
+- Map pin nhảy lúc đầu (online screen): **đã fix** – dùng `getLastKnownPositionAsync()` + AsyncStorage cache `last_gps_pos` → map render ngay với vị trí gần đúng, GPS chính xác dùng `panTo()` sau
 
 ### In-trip Communication (Hybrid WebRTC + RTDB)
 - **Hybrid:** WebRTC DataChannel thử trước (timeout 5s), nếu không kết nối → RTDB polling

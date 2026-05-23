@@ -16,7 +16,7 @@ import * as SecureStore from 'expo-secure-store'
 import type { UserRole, DriverInfo, CustomerInfo } from '../../src/types'
 import { SecureStoreKey } from '../../src/types'
 import { auth } from '../../src/services/firebase'
-import { getDriver, getMiner } from '../../src/services/firestore'
+import { getDriver, getMiner, getCustomerPenalty, setCustomerLockedUntil } from '../../src/services/firestore'
 
 const BRAND       = '#1A2E5E'
 const BRAND_LIGHT = '#E8EDF6'
@@ -136,7 +136,27 @@ export default function PhoneAuthScreen() {
       return
     }
     if (role === 'customer') {
-      const info: CustomerInfo = { uid, phone, cancelCount: 0 }
+      // Kiểm tra blacklist trước khi vào app
+      const penalty = await getCustomerPenalty(phone).catch(() => null)
+      if (penalty && penalty.cancelCount >= 3) {
+        const existingLock = await SecureStore.getItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL)
+        let lockUntil: number
+        if (existingLock && parseInt(existingLock) > Date.now()) {
+          lockUntil = parseInt(existingLock)
+        } else if (penalty.lockedUntil && penalty.lockedUntil > Date.now()) {
+          lockUntil = penalty.lockedUntil
+        } else {
+          lockUntil = Date.now() + 48 * 60 * 60 * 1000
+          setCustomerLockedUntil(phone, lockUntil).catch(() => {})
+        }
+        await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL, String(lockUntil))
+        const info: CustomerInfo = { uid, phone, cancelCount: penalty.cancelCount }
+        await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_INFO, JSON.stringify(info))
+        await SecureStore.setItemAsync(SecureStoreKey.USER_ROLE, 'customer')
+        router.replace({ pathname: '/lock-screen', params: { lockedUntil: String(lockUntil), reason: 'frequentCancel' } })
+        return
+      }
+      const info: CustomerInfo = { uid, phone, cancelCount: penalty?.cancelCount ?? 0 }
       await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_INFO, JSON.stringify(info))
       await SecureStore.setItemAsync(SecureStoreKey.USER_ROLE, 'customer')
       router.replace('/(customer)/home')

@@ -1,22 +1,23 @@
 // app/(driver)/home.tsx
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  AppState, AppStateStatus, Animated, Image, StatusBar, Platform, ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, Platform,
+  AppState, AppStateStatus, Animated, Image, StatusBar,
 } from 'react-native'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import * as SecureStore from 'expo-secure-store'
 import * as Notifications from 'expo-notifications'
-import { router } from 'expo-router'
+import { router, useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { updateDriverStatus, updateDriverLocation, updateDriverFcmToken } from '../../src/services/firestore'
-import { getCurrentLocation, geohashForQuery, distanceKm } from '../../src/services/location'
+import { updateDriverStatus, updateDriverFcmToken, getDriver, setDriverPendingTrip } from '../../src/services/firestore'
+import { getCurrentLocation } from '../../src/services/location'
 import { getODCBalance } from '../../src/services/odc'
 import { rtdb } from '../../src/services/firebase'
-import { savePendingTrip } from '../../src/utils/storage'
+import { savePendingTrip, getPendingPenalty, clearPendingPenalty, getEncryptedKey, getDriverInfo, saveDriverInfo } from '../../src/utils/storage'
+import { recordTrip } from '../../src/services/cloudflare'
 import NetworkAlert from '../../src/components/NetworkAlert'
 import { SecureStoreKey, DriverInfo, DriverStatus, PendingTrip } from '../../src/types'
 import type { TripRealtimeInfo, TripQuote } from '../../src/types'
@@ -25,67 +26,138 @@ const BRAND       = '#1A2E5E'
 const BRAND_LIGHT = '#E8EDF6'
 const BTN_SIZE    = 148
 const RING_OFFSET = 18
+const RING_SIZE   = BTN_SIZE + RING_OFFSET * 2
 
-// Cache ngoài React – giữ giá trị giữa các lần navigate, tránh flash màn trắng
 let _cachedDriverInfo: DriverInfo | null = null
-let _cachedBalance = 0
+let _cachedBalance    = 0
+let _fraudChecked     = false
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert:  true,
-    shouldPlaySound:  true,
-    shouldSetBadge:   false,
-    shouldShowBanner: true,
-    shouldShowList:   true,
+    shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: false,
+    shouldShowBanner: true, shouldShowList: true,
   }),
 })
 
 export default function DriverHomeScreen() {
   const { t } = useTranslation()
 
-  const [driverInfo,    setDriverInfo]    = useState<DriverInfo | null>(_cachedDriverInfo)
-  const [odcBalance,    setOdcBalance]    = useState(_cachedBalance)
-  const [showWifiAlert, setShowWifiAlert] = useState(false)
-  const [goingOnline,   setGoingOnline]   = useState(false)
+  const [driverInfo,     setDriverInfo]     = useState<DriverInfo | null>(_cachedDriverInfo)
+  const [odcBalance,     setOdcBalance]     = useState(_cachedBalance)
+  const [showWifiAlert,  setShowWifiAlert]  = useState(false)
+  const [isInitializing, setIsInitializing] = useState(true)
+  const [goingOnline,    setGoingOnline]    = useState(false)
+
   const appStateRef    = useRef(AppState.currentState)
   const isAnimatingRef = useRef(false)
   const navigatingRef  = useRef(false)
-  const lastPosRef     = useRef({ lat: 0, lng: 0 })
-  const pulseAnim      = useRef(new Animated.Value(1)).current
-  const pulseRef       = useRef<Animated.CompositeAnimation | null>(null)
+
+  const spinAnim     = useRef(new Animated.Value(0)).current
+  const logoOpacity  = useRef(new Animated.Value(1)).current
+  const labelOpacity = useRef(new Animated.Value(0)).current
+  const spinRef      = useRef<Animated.CompositeAnimation | null>(null)
+  const isMountedRef = useRef(false)
+
+  // Returning from online.tsx via router.back() – reset navigation state only, no spinner
+  useFocusEffect(useCallback(() => {
+    if (!isMountedRef.current) {
+      isMountedRef.current = true
+      return
+    }
+    navigatingRef.current = false
+    setGoingOnline(false)
+    loadDriverInfo()
+  }, []))
 
   useEffect(() => {
     navigatingRef.current = false
     setGoingOnline(false)
-    loadDriverInfo()
+    setIsInitializing(true)
+    logoOpacity.setValue(1)
+    labelOpacity.setValue(0)
+    spinAnim.setValue(0)
+
+    startSpinner()
+    initAll()
     registerFcmToken()
-    // FCM new_trip được xử lý bởi online.tsx – home chỉ cần handle trip_selected khi offline
+
     const subResp = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse)
-    const appSub  = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (appStateRef.current !== 'active' && state === 'active') registerFcmToken()
-      appStateRef.current = state
+    const appSub  = AppState.addEventListener('change', (s: AppStateStatus) => {
+      if (appStateRef.current !== 'active' && s === 'active') registerFcmToken()
+      appStateRef.current = s
     })
     return () => {
       subResp.remove()
       appSub.remove()
+      spinRef.current?.stop()
     }
   }, [])
 
-  useEffect(() => {
-    if (pulseRef.current) { pulseRef.current.stop(); pulseRef.current = null }
-    if (driverInfo?.status === 'ready') {
-      pulseRef.current = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.06, duration: 900, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1,    duration: 900, useNativeDriver: true }),
-        ])
-      )
-      pulseRef.current.start()
-    } else {
-      pulseAnim.setValue(1)
+  function startSpinner() {
+    spinRef.current?.stop()
+    spinAnim.setValue(0)
+    spinRef.current = Animated.loop(
+      Animated.timing(spinAnim, { toValue: 1, duration: 1100, useNativeDriver: true })
+    )
+    spinRef.current.start()
+  }
+
+  async function initAll() {
+    await loadDriverInfo()
+
+    // ── Kiểm tra gian lận: tài xế có pendingTrip=true trên Firestore không? ──
+    if (!_fraudChecked) {
+      _fraudChecked = true
+      const raw = await SecureStore.getItemAsync(SecureStoreKey.DRIVER_INFO)
+      if (raw) {
+        const info: DriverInfo = JSON.parse(raw)
+        const lockRaw = await SecureStore.getItemAsync(SecureStoreKey.DRIVER_LOCK_UNTIL)
+        if (lockRaw) {
+          const lockTs = parseInt(lockRaw)
+          if (lockTs > Date.now()) {
+            // Đang bị khóa → chuyển sang lock-screen
+            router.replace({ pathname: '/lock-screen', params: { lockedUntil: lockRaw, reason: 'fraud' } })
+            return
+          } else {
+            // Lock đã hết hạn → xóa local + Firestore
+            await SecureStore.deleteItemAsync(SecureStoreKey.DRIVER_LOCK_UNTIL)
+            setDriverPendingTrip(info.uid, false).catch(() => {})
+          }
+        } else {
+          // Không có lock local → kiểm tra Firestore (trường hợp xóa data rồi đăng nhập lại)
+          const driverDoc = await getDriver(info.uid).catch(() => null)
+          if (driverDoc?.referralCount != null && driverDoc.referralCount !== info.referralCount) {
+            saveDriverInfo({ ...info, referralCount: driverDoc.referralCount }).catch(() => {})
+          }
+          if (driverDoc?.pendingTrip === true) {
+            const lockUntil = Date.now() + 48 * 60 * 60 * 1000
+            await SecureStore.setItemAsync(SecureStoreKey.DRIVER_LOCK_UNTIL, String(lockUntil))
+            router.replace({ pathname: '/lock-screen', params: { lockedUntil: String(lockUntil), reason: 'fraud' } })
+            return
+          }
+        }
+      }
     }
-    return () => { if (pulseRef.current) pulseRef.current.stop() }
-  }, [driverInfo?.status])
+
+    await Promise.allSettled([
+      processPendingPenalty(),
+      warmupLocation(),
+      new Promise(r => setTimeout(r, 1400)),  // tối thiểu 1.4s để animation hiển thị
+    ])
+
+    Animated.parallel([
+      Animated.timing(logoOpacity,  { toValue: 0, duration: 380, useNativeDriver: true }),
+      Animated.timing(labelOpacity, { toValue: 1, duration: 380, useNativeDriver: true }),
+    ]).start(() => {
+      spinRef.current?.stop()
+      spinRef.current = null
+      setIsInitializing(false)
+    })
+  }
+
+  async function warmupLocation() {
+    try { await getCurrentLocation() } catch {}
+  }
 
   async function registerFcmToken() {
     try {
@@ -115,10 +187,6 @@ export default function DriverHomeScreen() {
     if (data.type === 'trip_selected' && data.tripId) handleTripSelectedNotification(data.tripId)
   }
 
-  function handleNewTripNotification(tripId: string) {
-    router.push({ pathname: '/(driver)/online', params: { expandTripId: tripId } })
-  }
-
   async function handleTripSelectedNotification(tripId: string) {
     try {
       const raw = await SecureStore.getItemAsync(SecureStoreKey.DRIVER_INFO)
@@ -136,10 +204,13 @@ export default function DriverHomeScreen() {
         startedAt:     new Date().toISOString(),
         pickupGeohash: tripInfo.pickupGeohash,
         dropGeohash:   tripInfo.dropGeohash,
+        pickupLat:     tripInfo.pickupLat ?? 0,
+        pickupLng:     tripInfo.pickupLng ?? 0,
         customerPhone: tripInfo.customerPhone,
         rating:        null,
       }
       await savePendingTrip(pendingTrip)
+      setDriverPendingTrip(info.uid, true).catch(() => {})
       await updateDriverStatus(info.uid, 'busy')
       const updated = { ...info, status: 'busy' as DriverStatus }
       await SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(updated))
@@ -150,6 +221,25 @@ export default function DriverHomeScreen() {
     }
   }
 
+  async function processPendingPenalty() {
+    try {
+      const pending = await getPendingPenalty()
+      if (!pending) return
+      const encryptedPrivateKey = await getEncryptedKey()
+      if (!encryptedPrivateKey) return
+      await recordTrip({
+        driverUid: pending.driverUid,
+        rating: 1,
+        tripPrice: pending.tripPrice,
+        memo27bytes: pending.memo27Base64,
+        isCancelled: true,
+        encryptedPrivateKey,
+      })
+      await clearPendingPenalty()
+      showAlert('Thông báo', 'Đã trừ ODC do hủy chuyến trước đó.')
+    } catch {}
+  }
+
   async function loadDriverInfo() {
     const raw = await SecureStore.getItemAsync(SecureStoreKey.DRIVER_INFO)
     if (!raw) return
@@ -158,7 +248,11 @@ export default function DriverHomeScreen() {
     _cachedDriverInfo = resetInfo
     if (!navigatingRef.current) setDriverInfo(resetInfo)
     await SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(resetInfo))
-    updateDriverStatus(info.uid, 'offline').catch(() => {})
+    ;(async () => {
+      for (let i = 0; i < 3; i++) {
+        try { await updateDriverStatus(info.uid, 'offline'); break } catch { await new Promise(r => setTimeout(r, 1500 * (i + 1))) }
+      }
+    })()
     const balance = await getODCBalance(info.stellarWallet)
     if (balance !== _cachedBalance && !navigatingRef.current) {
       _cachedBalance = balance
@@ -166,82 +260,44 @@ export default function DriverHomeScreen() {
     }
   }
 
-  const updateLocation = useCallback(async (info: DriverInfo) => {
-    if (info.status !== 'ready') return
-    try {
-      const { lat, lng } = await getCurrentLocation()
-      const { lat: lastLat, lng: lastLng } = lastPosRef.current
-      const dist = distanceKm(lastLat, lastLng, lat, lng)
-      if (dist < 1 && lastLat !== 0) return
-      const geohash = geohashForQuery(lat, lng)
-      await updateDriverLocation(info.uid, geohash)
-      lastPosRef.current = { lat, lng }
-    } catch {}
-  }, [])
-
-  function toggleStatus() {
-    if (!driverInfo) return
-    if (driverInfo.status === 'offline') {
-      navigatingRef.current = true
-      setGoingOnline(true)
-      SecureStore.setItemAsync(
-        SecureStoreKey.DRIVER_INFO,
-        JSON.stringify({ ...driverInfo, status: 'ready' as DriverStatus }),
-      ).catch(() => {})
-      updateDriverStatus(driverInfo.uid, 'ready').catch(() => {})
-      setTimeout(() => router.push('/(driver)/online'), 1000)
-      return
-    }
-    const updated = { ...driverInfo, status: 'offline' as DriverStatus }
-    _cachedDriverInfo = updated
-    setDriverInfo(updated)
-    SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(updated)).catch(() => {})
-    updateDriverStatus(driverInfo.uid, 'offline').catch(() => {})
-  }
-
   function handleButtonPress() {
-    if (isAnimatingRef.current || !driverInfo) return
+    if (isAnimatingRef.current || isInitializing || goingOnline || !driverInfo) return
     isAnimatingRef.current = true
-    toggleStatus()
+    setGoingOnline(true)
+    navigatingRef.current = true
+    startSpinner()
+    SecureStore.setItemAsync(
+      SecureStoreKey.DRIVER_INFO,
+      JSON.stringify({ ...driverInfo, status: 'ready' as DriverStatus }),
+    ).catch(() => {})
+    updateDriverStatus(driverInfo.uid, 'ready').catch(() => {})
+    setTimeout(() => router.push('/(driver)/online'), 500)
     isAnimatingRef.current = false
   }
 
-
-
-  if (!driverInfo) return (
-    <SafeAreaView style={[styles.safe, { justifyContent: 'center', alignItems: 'center' }]} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F7F9FD" />
-    </SafeAreaView>
-  )
-
-  const isReady = driverInfo.status === 'ready'
-  const balanceDisplay = Number.isInteger(odcBalance)
-    ? String(odcBalance)
-    : odcBalance.toFixed(2)
+  const balanceDisplay = Number.isInteger(odcBalance) ? String(odcBalance) : odcBalance.toFixed(2)
+  const spinRotate = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
+  const showSpinArc = isInitializing || goingOnline
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F7F9FD" />
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
       <NetworkAlert visible={showWifiAlert} onDismiss={() => setShowWifiAlert(false)} />
 
       {/* ── Header card ── */}
       <View style={styles.headerCard}>
-        {/* Left: avatar + name + rating */}
         <View style={styles.headerLeft}>
           <View style={styles.avatar}>
             <Text style={styles.avatarLetter}>
-              {driverInfo.name?.[0]?.toUpperCase() ?? '?'}
+              {driverInfo?.name?.[0]?.toUpperCase() ?? '?'}
             </Text>
           </View>
           <View style={styles.headerInfo}>
-            <Text style={styles.driverName} numberOfLines={1}>{driverInfo.name}</Text>
-            <Text style={styles.ratingText}>
-              ★ {driverInfo.rating.toFixed(1)}
-            </Text>
+            <Text style={styles.driverName} numberOfLines={1}>{driverInfo?.name ?? '…'}</Text>
+            <Text style={styles.ratingText}>★ {driverInfo?.rating?.toFixed(1) ?? '–'}</Text>
           </View>
         </View>
 
-        {/* Right: ODC balance + settings */}
         <View style={styles.headerRight}>
           <View style={styles.balanceStack}>
             <View style={styles.balanceLabelRow}>
@@ -260,68 +316,60 @@ export default function DriverHomeScreen() {
         </View>
       </View>
 
-      {/* ── Logo + Slogan ── */}
-      <View style={styles.logoWrap}>
-        <Image
-          source={require('../../assets/logo_od.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-        <Text style={styles.slogan}>{t('roleSelect.slogan')}</Text>
-      </View>
+      <View style={{ flex: 1 }} />
 
-      {/* ── Ready button + ring ── */}
+      <Text style={styles.slogan}>{t('roleSelect.slogan')}</Text>
+      <Text style={styles.greeting}>
+        Xin chào {driverInfo?.name?.split(' ').pop() ?? 'bạn'}!
+      </Text>
+      <Text style={styles.subGreeting}>Bạn đã sẵn sàng để nhận chuyến chưa?</Text>
+
+      <View style={{ height: 20 }} />
+
+      {/* ── Button area ── */}
       <View style={styles.btnArea}>
-        {/* Track ring */}
-        <View style={[styles.trackRing, isReady && styles.trackRingOnline]} />
-
-        {/* Pulse ring (online, idle) */}
-        {isReady && (
-          <Animated.View
-            style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]}
-          />
+        <View style={styles.trackRing} />
+        {showSpinArc && (
+          <Animated.View style={[styles.spinArc, { transform: [{ rotate: spinRotate }] }]} />
         )}
-
         <TouchableOpacity
-          style={[styles.readyBtn, isReady ? styles.readyBtnOn : styles.readyBtnOff]}
+          style={styles.readyBtn}
           onPress={handleButtonPress}
           activeOpacity={0.82}
-          disabled={goingOnline}
+          disabled={isInitializing || goingOnline}
         >
-          {goingOnline
-            ? <ActivityIndicator color={BRAND} size="small" />
-            : <Text style={[styles.readyLabel, isReady ? styles.readyLabelOn : styles.readyLabelOff]}>
-                {isReady ? t('driver.readyOn') : t('driver.readyOff')}
-              </Text>
-          }
+          <Animated.Image
+            source={require('../../assets/logo_od.png')}
+            style={[styles.btnLogo, { opacity: logoOpacity }]}
+            resizeMode="contain"
+          />
+          <Animated.Text style={[styles.readyLabel, { opacity: labelOpacity }]}>
+            {t('driver.readyOff')}
+          </Animated.Text>
         </TouchableOpacity>
       </View>
 
-      <Text style={[styles.statusLine, isReady && styles.statusLineOn]}>
-        {t(`driver.status.${driverInfo.status}`)}
+      <Text style={styles.statusLine}>
+        {isInitializing
+          ? 'Đang khởi động…'
+          : t(`driver.status.${driverInfo?.status ?? 'offline'}`)}
       </Text>
 
-      {/* ── Ad panel ── */}
-      <View style={styles.adPanel}>
-        <Ionicons name="megaphone-outline" size={16} color="#94A3B8" />
-        <Text style={styles.adLabel}>{t('driver.adLabel')}</Text>
-      </View>
+      <View style={{ flex: 2 }} />
     </SafeAreaView>
   )
 }
-
-const RING_SIZE = BTN_SIZE + RING_OFFSET * 2
 
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: '#F7F9FD',
     alignItems: 'center',
-    paddingBottom: 56,
   },
 
   // ── Header card ──
   headerCard: {
+    alignSelf: 'stretch',
     marginHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
@@ -334,15 +382,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND_LIGHT,
     ...Platform.select({
-      ios: {
-        shadowColor: BRAND,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.10,
-        shadowRadius: 10,
-      },
-      android: {
-        elevation: 0,
-      },
+      ios: { shadowColor: BRAND, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 10 },
+      android: { elevation: 0 },
     }),
   },
   headerLeft: {
@@ -414,25 +455,28 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND,
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden',
   },
 
-  // ── Logo + Slogan ──
-  logoWrap: {
-    alignItems: 'center',
-    marginTop: 32,
-    marginBottom: 8,
-  },
-  logo: {
-    width: 260,
-    height: 160,
-  },
   slogan: {
     fontSize: 13,
     color: '#94A3B8',
     fontStyle: 'italic',
     letterSpacing: 0.3,
-    marginTop: -8,
+    marginBottom: 16,
+  },
+  greeting: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: BRAND,
+    marginBottom: 6,
+  },
+  subGreeting: {
+    fontSize: 14,
+    color: '#64748B',
+    marginBottom: 0,
+    alignSelf: 'stretch',
+    textAlign: 'center',
+    paddingHorizontal: 24,
   },
 
   // ── Button area ──
@@ -441,7 +485,6 @@ const styles = StyleSheet.create({
     height: RING_SIZE + 8,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 32,
   },
   trackRing: {
     position: 'absolute',
@@ -450,9 +493,6 @@ const styles = StyleSheet.create({
     borderRadius: RING_SIZE / 2,
     borderWidth: 2,
     borderColor: '#E2E8F0',
-  },
-  trackRingOnline: {
-    borderColor: BRAND_LIGHT,
   },
   spinArc: {
     position: 'absolute',
@@ -465,76 +505,37 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
     borderLeftColor: 'transparent',
   },
-  pulseRing: {
-    position: 'absolute',
-    width: RING_SIZE,
-    height: RING_SIZE,
-    borderRadius: RING_SIZE / 2,
-    borderWidth: 2.5,
-    borderColor: BRAND,
-    opacity: 0.35,
-  },
   readyBtn: {
     width: BTN_SIZE,
     height: BTN_SIZE,
     borderRadius: BTN_SIZE / 2,
+    backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: BRAND,
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
+    shadowOpacity: 0.15,
     shadowRadius: 12,
     elevation: 8,
   },
-  readyBtnOff: {
-    backgroundColor: '#fff',
-  },
-  readyBtnOn: {
-    backgroundColor: BRAND,
+  btnLogo: {
+    position: 'absolute',
+    width: 88,
+    height: 88,
   },
   readyLabel: {
+    position: 'absolute',
     fontSize: 16,
     fontWeight: '800',
+    color: BRAND,
     textAlign: 'center',
     lineHeight: 22,
     letterSpacing: 0.5,
   },
-  readyLabelOff: {
-    color: BRAND,
-  },
-  readyLabelOn: {
-    color: '#fff',
-  },
-
   statusLine: {
-    marginTop: 14,
     fontSize: 13,
     fontWeight: '600',
     color: '#94A3B8',
     letterSpacing: 0.3,
-  },
-  statusLineOn: {
-    color: '#15803D',
-  },
-
-  // ── Ad panel ──
-  adPanel: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 56,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  adLabel: {
-    fontSize: 13,
-    color: '#94A3B8',
-    fontWeight: '500',
   },
 })

@@ -20,11 +20,18 @@ export enum SecureStoreKey {
   DRIVER_ENCRYPTED_KEY = 'driver_encrypted_key',
   DRIVER_LOCK_UNTIL    = 'driver_lock_until',
   PENDING_TRIP         = 'pending_trip',
+  PENDING_PENALTY      = 'pending_penalty',
   CUSTOMER_INFO        = 'customer_info',
   CUSTOMER_LOCK_UNTIL  = 'customer_lock_until',
   MINER_INFO           = 'miner_info',
   MINER_SESSION        = 'miner_session',
   USER_ROLE            = 'user_role',
+}
+
+export interface PendingPenalty {
+  driverUid:     string
+  tripPrice:     number
+  memo27Base64:  string   // Uint8Array encoded as base64
 }
 
 // AsyncStorage keys – auto quote settings tài xế
@@ -61,14 +68,15 @@ export interface DriverDoc {
   termsVersion:        string        // vd: "1.0"
   updatedAt:           FirebaseTimestamp
   fcmToken?:           string        // FCM push token, cập nhật mỗi lần app mở
+  pendingTrip?:        boolean       // true khi đang có chuyến chưa hoàn thành blockchain
 }
 
 export interface BlacklistCustomerDoc {
-  uid:          string
   phone:        string
-  cancelCount:  1 | 2
-  lockedUntil:  FirebaseTimestamp
-  createdAt:    FirebaseTimestamp
+  cancelCount:  number
+  lockedUntil?: number        // Unix ms – set khi cancelCount >= 3
+  createdAt:    string        // ISO string
+  updatedAt:    string        // ISO string
 }
 
 export interface MinerDoc {
@@ -156,6 +164,9 @@ export interface AutoQuoteSettings {
   basePrice:          number    // giá km đầu tiên (vd: 15000)
   pricePerKm:         number    // giá từ km tiếp theo (vd: 5000)
   peakHourMultiplier: number    // vd: 1.15
+  peakHourEnabled:    boolean   // bật/tắt tự động áp hệ số cao điểm
+  peakHourStart:      string    // "06:00"
+  peakHourEnd:        string    // "09:00"
   rainMultiplier:     number    // vd: 1.20
   rainModeEnabled:    boolean   // tài xế tự bật khi trời mưa
   minKm:              number
@@ -167,7 +178,10 @@ export const DEFAULT_AUTO_QUOTE_SETTINGS: AutoQuoteSettings = {
   baseKm:             2,
   basePrice:          15000,
   pricePerKm:         5000,
-  peakHourMultiplier: 1.0,
+  peakHourMultiplier: 1.15,
+  peakHourEnabled:    false,
+  peakHourStart:      '06:00',
+  peakHourEnd:        '09:00',
   rainMultiplier:     1.2,
   rainModeEnabled:    false,
   minKm:              0,
@@ -208,78 +222,13 @@ export interface StellarRecordRequest {
   driverUid:           string
   rating:              RatingValue
   tripPrice:           number       // VNĐ
-  memo27bytes:         string       // 27 bytes encoded
+  memo27bytes:         string       // 27 bytes as base64
   isCancelled:         boolean
   encryptedPrivateKey: string       // blob từ SecureStore client
 }
 export interface StellarRecordResponse {
   txHash:     string    // Stellar transaction hash
   odcCharged: number    // ODC đã trừ
-}
-
-export interface TurnCredentials {
-  urls:       string
-  username:   string
-  credential: string
-  ttl:        number
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// WEBRTC & DATACHANNEL
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type DataChannelMessageType =
-  | 'location'
-  | 'status'
-  | 'trip_info'
-  | 'rating'
-  | 'ping'
-  | 'pong'
-
-export interface DCLocationMessage {
-  type:      'location'
-  lat:       number
-  lng:       number
-  timestamp: number
-}
-
-export interface DCStatusMessage {
-  type:   'status'
-  status: 'going_to_pickup' | 'arrived' | 'picked_up' | 'completed'
-}
-
-export interface DCTripInfoMessage {
-  type:         'trip_info'
-  driverName:   string
-  driverPhone:  string
-  licensePlate: string
-  vehicleBrand: string
-}
-
-export interface DCRatingMessage {
-  type:  'rating'
-  value: RatingValue
-}
-
-export interface DCPingMessage {
-  type:      'ping' | 'pong'
-  timestamp: number
-}
-
-export type DataChannelMessage =
-  | DCLocationMessage
-  | DCStatusMessage
-  | DCTripInfoMessage
-  | DCRatingMessage
-  | DCPingMessage
-
-// Quản lý nhiều RTCPeerConnection cùng lúc (multiple cuốc)
-export interface PeerConnectionEntry {
-  tripId:     string
-  pc:         any
-  dc:         any | null
-  customerId: string
-  createdAt:  number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -301,6 +250,7 @@ export interface TripRealtimeInfo {
   pickupAddress?: string
   destAddress?:   string
   note?:          string
+  cancelled?:     'customer' | 'driver'
 }
 
 export interface TripQuote {
@@ -314,6 +264,8 @@ export interface TripQuote {
   ratingCount:  number
   quotedPrice:  number    // VNĐ
   createdAt:    number
+  driverLat?:   number   // vị trí tài xế lúc báo giá
+  driverLng?:   number
 }
 
 export interface IceCandidatePayload {

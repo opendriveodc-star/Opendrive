@@ -144,6 +144,29 @@ async function sendODC(
   await server.submitTransaction(tx)
 }
 
+async function sendFcmToDevice(
+  projectId:   string,
+  accessToken: string,
+  fcmToken:    string,
+  title:       string,
+  body:        string,
+): Promise<void> {
+  await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
+    method:  'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type':  'application/json',
+    },
+    body: JSON.stringify({
+      message: {
+        token:        fcmToken,
+        notification: { title, body },
+        android: { priority: 'high', notification: { sound: 'default' } },
+      },
+    }),
+  })
+}
+
 async function verifyFirebaseJWT(token: string): Promise<boolean> {
   try {
     const parts   = token.split('.')
@@ -290,6 +313,16 @@ export default {
             await sendODC(server, distributorKp, ODC_ASSET, networkPass, referrerWallet, '10')
             const oldRefCount = Number(referrerFields.referralCount?.doubleValue ?? referrerFields.referralCount?.integerValue ?? 0)
             await updateFirestoreDriver(projectId, accessToken, referredBy, { referralCount: oldRefCount + 1 })
+            // Gửi FCM thông báo cho tài xế giới thiệu
+            const referrerFcm = referrerFields.fcmToken?.stringValue
+            const driverName  = driverFields.name?.stringValue ?? 'Tài xế bạn giới thiệu'
+            if (referrerFcm) {
+              sendFcmToDevice(
+                projectId, accessToken, referrerFcm,
+                '🎉 Thưởng giới thiệu +10 ODC',
+                `${driverName} vừa hoàn thành chuyến đầu tiên!`,
+              ).catch(() => {})
+            }
           }
         }
       }

@@ -10,7 +10,7 @@ export default function DriverLayout() {
       <Stack.Screen name="history" />
       <Stack.Screen name="wallet" />
       <Stack.Screen name="referral" />
-      <Stack.Screen name="online" options={{ animation: 'none' }} />
+      <Stack.Screen name="online" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="quote-config" />
       <Stack.Screen name="driver-info" />
       <Stack.Screen name="bidding" />

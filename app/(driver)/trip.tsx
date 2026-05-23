@@ -14,22 +14,20 @@ import * as Location from 'expo-location'
 import * as Notifications from 'expo-notifications'
 import MapView from '../../src/components/MapView'
 import type { MapViewHandle } from '../../src/components/MapView'
-import { createAnswerConnection, closePeerConnection, sendMessage } from '../../src/services/webrtc'
-import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip, saveDriverInfo } from '../../src/utils/storage'
+import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip, saveDriverInfo, savePendingPenalty } from '../../src/utils/storage'
 import { recordTrip } from '../../src/services/cloudflare'
-import { updateDriverStatus } from '../../src/services/firestore'
+import { updateDriverStatus, setDriverPendingTrip, incrementCustomerPenalty } from '../../src/services/firestore'
 import { encodeMemo } from '../../src/services/odc'
 import { rtdb } from '../../src/services/firebase'
 import { maskPhone } from '../../src/utils/format'
+import { distanceKm } from '../../src/services/location'
 import { LOCATION } from '../../src/constants'
 import type {
-  PendingTrip, DCLocationMessage, DCStatusMessage,
-  DataChannelMessage, DriverInfo, RatingValue, TripRealtimeInfo,
+  PendingTrip, DriverInfo, RatingValue, TripRealtimeInfo,
 } from '../../src/types'
 
 const BRAND        = '#1A2E5E'
 const BRAND_LIGHT  = '#E8EDF6'
-const WEBRTC_TIMEOUT_MS = 5_000
 
 export default function TripScreen() {
   const { t }    = useTranslation()
@@ -47,18 +45,24 @@ export default function TripScreen() {
   const [tripNote,         setTripNote]         = useState('')
   const [dropLat,          setDropLat]          = useState<number | null>(null)
   const [dropLng,          setDropLng]          = useState<number | null>(null)
+  const [nearPickup,       setNearPickup]       = useState(false)
+  const [distToPickup,     setDistToPickup]     = useState<number | null>(null)
+  const [nearDropoff,      setNearDropoff]      = useState(false)
+  const [distToDropoff,    setDistToDropoff]    = useState<number | null>(null)
 
   const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const ratingPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
   const ratingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const webrtcTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const bridgeRef        = useRef<any | null>(null)
   const pickedUpRef      = useRef(false)
-  const connectedRef     = useRef(false)
-  const usingRtdbRef     = useRef(false)
-  const pendingTripRef   = useRef<PendingTrip | null>(null)
-  const driverInfoRef    = useRef<DriverInfo | null>(null)
-  const mapInitRef       = useRef<{ lat: number; lng: number } | null>(null)
+  const pendingTripRef      = useRef<PendingTrip | null>(null)
+  const driverInfoRef       = useRef<DriverInfo | null>(null)
+  const mapInitRef          = useRef<{ lat: number; lng: number } | null>(null)
+  const proximityRef        = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pickupProximityRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+  const cancelPollRef       = useRef<ReturnType<typeof setInterval> | null>(null)
+  const dropLatRef          = useRef<number | null>(null)
+  const dropLngRef          = useRef<number | null>(null)
+  const navNotifIdRef       = useRef<string | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -81,13 +85,72 @@ export default function TripScreen() {
           if (info?.pickupAddress) setPickupAddress(info.pickupAddress)
           if (info?.destAddress)   setDestAddress(info.destAddress)
           if (info?.note)          setTripNote(info.note)
-          if (info?.dropLat)       setDropLat(info.dropLat)
-          if (info?.dropLng)       setDropLng(info.dropLng)
+          if (info?.dropLat)       { setDropLat(info.dropLat);  dropLatRef.current = info.dropLat }
+          if (info?.dropLng)       { setDropLng(info.dropLng);  dropLngRef.current = info.dropLng }
         } catch {}
+
+        // Kiểm tra khoảng cách đến điểm đón mỗi 5s
+        if (trip.pickupLat && trip.pickupLng) {
+          pickupProximityRef.current = setInterval(async () => {
+            if (pickedUpRef.current) {
+              if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
+              return
+            }
+            try {
+              const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+              const dist = distanceKm(loc.coords.latitude, loc.coords.longitude, trip.pickupLat!, trip.pickupLng!)
+              setDistToPickup(dist)
+              if (dist <= 0.1) {
+                setNearPickup(true)
+                dismissNavNotif()
+                if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
+              }
+            } catch {}
+          }, 5000)
+        } else {
+          setNearPickup(true) // Không có tọa độ → cho phép bấm luôn
+        }
       }
     }
     load()
+    return () => {
+      if (pickupProximityRef.current) clearInterval(pickupProximityRef.current)
+    }
   }, [])
+
+  // Poll phát hiện khách hủy
+  useEffect(() => {
+    if (!pendingTrip) return
+    const tripId = pendingTrip.tripId
+    cancelPollRef.current = setInterval(async () => {
+      try {
+        const cancelled = await rtdb.get<string>(`trips/${tripId}/cancelled`)
+        if (cancelled === 'customer') {
+          if (cancelPollRef.current) { clearInterval(cancelPollRef.current); cancelPollRef.current = null }
+          if (intervalRef.current)   { clearInterval(intervalRef.current);   intervalRef.current   = null }
+          if (proximityRef.current)  { clearInterval(proximityRef.current);  proximityRef.current  = null }
+          if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
+          bridgeRef.current?.stop()
+          dismissNavNotif()
+          showAlert(t('cancel.customerCancelled'), undefined, [{
+            text: 'OK',
+            onPress: async () => {
+              await clearPendingTrip()
+              if (driverInfoRef.current) {
+                setDriverPendingTrip(driverInfoRef.current.uid, false).catch(() => {})
+                updateDriverStatus(driverInfoRef.current.uid, 'ready').catch(() => {})
+              }
+              await rtdb.delete(`trips/${tripId}`).catch(() => {})
+              router.replace('/(driver)/online')
+            },
+          }])
+        }
+      } catch {}
+    }, 3000)
+    return () => {
+      if (cancelPollRef.current) { clearInterval(cancelPollRef.current); cancelPollRef.current = null }
+    }
+  }, [pendingTrip])
 
   // Ghi trip_info lên RTDB 1 lần
   useEffect(() => {
@@ -100,52 +163,11 @@ export default function TripScreen() {
     }).catch(() => {})
   }, [pendingTrip, driverInfo])
 
-  // Khởi tạo WebRTC + fallback 5s
+  // Bắt đầu gửi vị trí qua RTDB ngay khi vào màn hình
   useEffect(() => {
     if (!pendingTrip) return
     const tripId = pendingTrip.tripId
-    let mounted = true
 
-    async function initWebRTC() {
-      try {
-        const bridge = await createAnswerConnection(
-          tripId,
-          handleDataChannelMessage,
-          () => {
-            if (!mounted) return
-            connectedRef.current = true
-            if (webrtcTimerRef.current) { clearTimeout(webrtcTimerRef.current); webrtcTimerRef.current = null }
-            startLocationInterval(tripId, 'webrtc')
-          },
-        )
-        bridgeRef.current = bridge
-      } catch {
-        if (mounted) activateRtdb(tripId)
-      }
-    }
-
-    initWebRTC()
-    webrtcTimerRef.current = setTimeout(() => {
-      if (!connectedRef.current) activateRtdb(tripId)
-    }, WEBRTC_TIMEOUT_MS)
-
-    return () => {
-      mounted = false
-      if (webrtcTimerRef.current) clearTimeout(webrtcTimerRef.current)
-      if (intervalRef.current) clearInterval(intervalRef.current)
-      bridgeRef.current?.stop()
-      closePeerConnection(tripId)
-    }
-  }, [pendingTrip])
-
-  function activateRtdb(tripId: string) {
-    if (usingRtdbRef.current) return
-    usingRtdbRef.current = true
-    startLocationInterval(tripId, 'rtdb')
-  }
-
-  function startLocationInterval(tripId: string, mode: 'webrtc' | 'rtdb') {
-    if (intervalRef.current) clearInterval(intervalRef.current)
     intervalRef.current = setInterval(async () => {
       if (pickedUpRef.current) return
       try {
@@ -154,16 +176,16 @@ export default function TripScreen() {
         const lng = loc.coords.longitude
         mapRef.current?.updateDriverMarker(lat, lng)
         mapRef.current?.panTo(lat, lng)
-        if (mode === 'webrtc') {
-          sendMessage(tripId, { type: 'location', lat, lng, timestamp: Date.now() } as DCLocationMessage)
-        } else {
-          await rtdb.set(`trips/${tripId}/location`, { lat, lng, timestamp: Date.now() })
-        }
+        await rtdb.set(`trips/${tripId}/location`, { lat, lng, timestamp: Date.now() })
       } catch {}
-    }, LOCATION.DATACHANNEL_INTERVAL_MS)
-  }
+    }, LOCATION.RTDB_INTERVAL_MS)
 
-  function handleDataChannelMessage(_msg: DataChannelMessage) {}
+    return () => {
+      if (intervalRef.current)        clearInterval(intervalRef.current)
+      if (proximityRef.current)       clearInterval(proximityRef.current)
+      if (pickupProximityRef.current) clearInterval(pickupProximityRef.current)
+    }
+  }, [pendingTrip])
 
   function handleAbandon() {
     showAlert(t('trip.abandonTrip'), t('trip.abandonConfirm'), [
@@ -178,27 +200,50 @@ export default function TripScreen() {
           if (pendingTrip && driverInfo) {
             try {
               const encryptedPrivateKey = await getEncryptedKey()
-              if (encryptedPrivateKey) {
-                const memo27bytes = encodeMemo(
+              if (!encryptedPrivateKey) throw new Error('no key')
+              const memo27bytes = encodeMemo(
+                driverInfo.phone, pendingTrip.customerPhone,
+                pendingTrip.pickupGeohash, pendingTrip.dropGeohash, 1,
+              )
+              await recordTrip({
+                driverUid: driverInfo.uid,
+                rating: 1,
+                tripPrice: pendingTrip.tripPrice,
+                memo27bytes,
+                isCancelled: true,
+                encryptedPrivateKey,
+              })
+            } catch {
+              // Mạng yếu / Worker fail → lưu lại để xử lý lần đăng nhập sau
+              if (pendingTrip && driverInfo) {
+                const memo27Base64 = encodeMemo(
                   driverInfo.phone, pendingTrip.customerPhone,
                   pendingTrip.pickupGeohash, pendingTrip.dropGeohash, 1,
                 )
-                await recordTrip({
-                  driverUid: driverInfo.uid,
-                  rating: 1,
-                  tripPrice: pendingTrip.tripPrice,
-                  memo27bytes,
-                  isCancelled: true,
-                  encryptedPrivateKey,
-                })
+                await savePendingPenalty({
+                  driverUid:    driverInfo.uid,
+                  tripPrice:    pendingTrip.tripPrice,
+                  memo27Base64,
+                }).catch(() => {})
               }
-            } catch {}
+              showAlert(
+                'Hệ thống gặp sự cố',
+                'Không thể trừ ODC ngay lúc này. Hệ thống sẽ tự động xử lý vào lần mở app tiếp theo.',
+              )
+            }
           }
 
-          if (pendingTrip) await rtdb.delete(`trips/${pendingTrip.tripId}`).catch(() => {})
+          // Tài xế hủy tại điểm đón → phạt khách +2
+          if (nearPickup && pendingTrip) {
+            incrementCustomerPenalty(pendingTrip.customerPhone, 2).catch(() => {})
+          }
+          // Báo hiệu cho khách biết tài xế đã hủy (khách sẽ xóa trip)
+          if (pendingTrip) await rtdb.set(`trips/${pendingTrip.tripId}/cancelled`, 'driver').catch(() => {})
           await clearPendingTrip()
-          if (driverInfo) updateDriverStatus(driverInfo.uid, 'offline').catch(() => {})
-          router.replace('/(driver)/home')
+          if (driverInfo) setDriverPendingTrip(driverInfo.uid, false).catch(() => {})
+          if (driverInfo) updateDriverStatus(driverInfo.uid, 'ready').catch(() => {})
+          dismissNavNotif()
+          router.replace('/(driver)/online')
         },
       },
     ])
@@ -208,12 +253,38 @@ export default function TripScreen() {
     if (!pendingTrip) return
     pickedUpRef.current = true
     setPickedUp(true)
+    if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
     mapRef.current?.hideCustomerMarker()
-    if (!usingRtdbRef.current) {
-      sendMessage(pendingTrip.tripId, { type: 'status', status: 'picked_up' } as DCStatusMessage)
-    }
     rtdb.set(`trips/${pendingTrip.tripId}/trip_status`, 'picked_up').catch(() => {})
+
+    // Bắt đầu check khoảng cách đến điểm đến
+    const dLat = dropLatRef.current
+    const dLng = dropLngRef.current
+    if (!dLat || !dLng) {
+      // Không có tọa độ điểm đến → cho phép hoàn thành ngay
+      setNearDropoff(true)
+      return
+    }
+    proximityRef.current = setInterval(async () => {
+      try {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        const dist = distanceKm(loc.coords.latitude, loc.coords.longitude, dLat, dLng)
+        setDistToDropoff(dist)
+        if (dist <= 0.1) {
+          setNearDropoff(true)
+          dismissNavNotif()
+          if (proximityRef.current) { clearInterval(proximityRef.current); proximityRef.current = null }
+        }
+      } catch {}
+    }, 5000)
+  }
+
+  function dismissNavNotif() {
+    if (navNotifIdRef.current) {
+      Notifications.dismissNotificationAsync(navNotifIdRef.current).catch(() => {})
+      navNotifIdRef.current = null
+    }
   }
 
   async function handleOpenMaps() {
@@ -223,12 +294,18 @@ export default function TripScreen() {
     if (!lat || !lng) return
     const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`
 
+    dismissNavNotif()
     Linking.openURL(url).catch(() => showAlert(t('common.error'), t('error.unknown')))
-    // Notification nhắc quay lại app
+    const label = pickedUp ? 'Đang đến điểm đến' : 'Đang đến điểm đón'
     Notifications.scheduleNotificationAsync({
-      content: { title: '📍 OpenDrive', body: 'Nhấn để quay lại chuyến đi' },
+      content: {
+        title: `📍 ${label}`,
+        body: 'Nhấn để quay lại OpenDrive',
+        sticky: true,
+        data: { screen: 'trip' },
+      },
       trigger: null,
-    }).catch(() => {})
+    }).then(id => { navNotifIdRef.current = id }).catch(() => {})
   }
 
   function handleEndTrip() {
@@ -238,9 +315,6 @@ export default function TripScreen() {
         text: t('common.confirm'),
         onPress: () => {
           if (!pendingTrip) return
-          if (!usingRtdbRef.current) {
-            sendMessage(pendingTrip.tripId, { type: 'status', status: 'completed' } as DCStatusMessage)
-          }
           rtdb.set(`trips/${pendingTrip.tripId}/trip_status`, 'completed').catch(() => {})
           setWaitingForRating(true)
           startRatingPoll()
@@ -288,8 +362,10 @@ export default function TripScreen() {
       const isFirstTrip = !driverInfo.firstTripDone
       if (isFirstTrip) await saveDriverInfo({ ...driverInfo, firstTripDone: true }).catch(() => {})
       await clearPendingTrip()
+      setDriverPendingTrip(driverInfo.uid, false).catch(() => {})
       await updateDriverStatus(driverInfo.uid, 'ready')
       await rtdb.delete(`trips/${pendingTrip.tripId}`).catch(() => {})
+      dismissNavNotif()
       if (isFirstTrip) {
         showAlert(t('trip.firstTripTitle'), t('trip.firstTripBonus'), [
           { text: 'OK', onPress: () => router.replace('/(driver)/online') },
@@ -423,14 +499,58 @@ export default function TripScreen() {
 
           {/* Đến điểm đón → sau khi bấm đổi thành Hoàn thành */}
           {!pickedUp ? (
-            <TouchableOpacity style={styles.pickupBtn} onPress={handlePickedUp} activeOpacity={0.85}>
-              <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
-              <Text style={styles.pickupBtnText}>{t('trip.driverArrived')}</Text>
-            </TouchableOpacity>
-          ) : (
+            nearPickup ? (
+              <TouchableOpacity style={styles.pickupBtn} onPress={handlePickedUp} activeOpacity={0.85}>
+                <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+                <Text style={styles.pickupBtnText}>{t('trip.driverArrived')}</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.endBtnDisabled}
+                activeOpacity={0.7}
+                onPress={() => showAlert(
+                  '📍 Chưa đến điểm đón',
+                  distToPickup !== null
+                    ? `Bạn còn cách điểm đón ${distToPickup < 1 ? Math.round(distToPickup * 1000) + ' m' : distToPickup.toFixed(1) + ' km'}.\n\nNút sẽ mở khóa khi bạn đến trong vòng 100m.`
+                    : 'Đang xác định vị trí, vui lòng chờ...',
+                )}
+              >
+                <Ionicons name="checkmark-circle-outline" size={16} color="#94A3B8" />
+                <View>
+                  <Text style={styles.endBtnDisabledText}>{t('trip.driverArrived')}</Text>
+                  <Text style={styles.endBtnHint}>
+                    {distToPickup !== null
+                      ? `Còn ${distToPickup < 1 ? Math.round(distToPickup * 1000) + ' m' : distToPickup.toFixed(1) + ' km'} đến điểm đón`
+                      : 'Đang xác định vị trí...'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )
+          ) : nearDropoff ? (
             <TouchableOpacity style={styles.endBtn} onPress={handleEndTrip} activeOpacity={0.85}>
               <Ionicons name="flag-outline" size={16} color="#fff" />
               <Text style={styles.endBtnText}>{t('trip.completed')}</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.endBtnDisabled}
+              activeOpacity={0.7}
+              onPress={() => showAlert(
+                '📍 Chưa đến điểm đến',
+                distToDropoff !== null
+                  ? `Bạn còn cách điểm đến ${distToDropoff < 1 ? Math.round(distToDropoff * 1000) + ' m' : distToDropoff.toFixed(1) + ' km'}.\n\nApp sẽ tự mở khóa nút hoàn thành khi bạn đến trong vòng 100m — hãy di chuyển đến điểm đến trước nhé!`
+                  : 'Đang xác định vị trí của bạn, vui lòng chờ trong giây lát...',
+              )}
+            >
+              <Ionicons name="flag-outline" size={16} color="#94A3B8" />
+              <View>
+                <Text style={styles.endBtnDisabledText}>Hoàn thành chuyến</Text>
+                <Text style={styles.endBtnHint}>
+                  {distToDropoff !== null
+                    ? `Còn ${distToDropoff < 1 ? Math.round(distToDropoff * 1000) + ' m' : distToDropoff.toFixed(1) + ' km'} đến điểm đến`
+                    : 'Đang xác định vị trí...'}
+                </Text>
+              </View>
             </TouchableOpacity>
           )}
         </View>
@@ -514,4 +634,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#DC2626', borderRadius: 12, paddingVertical: 14,
   },
   endBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+
+  endBtnDisabled: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#F1F5F9', borderRadius: 12, paddingVertical: 12,
+    borderWidth: 1.5, borderColor: '#E2E8F0',
+  },
+  endBtnDisabledText: { fontSize: 15, fontWeight: '700', color: '#94A3B8' },
+  endBtnHint: { fontSize: 11, color: '#94A3B8', textAlign: 'center', marginTop: 2 },
 })

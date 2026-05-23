@@ -13,7 +13,7 @@ import { showAlert } from '../../src/components/GlobalAlert'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { recordTrip } from '../../src/services/cloudflare'
-import { updateDriverStatus } from '../../src/services/firestore'
+import { updateDriverStatus, setDriverPendingTrip } from '../../src/services/firestore'
 import {
   getPendingTrip,
   clearPendingTrip,
@@ -62,6 +62,7 @@ export default function PendingTripScreen() {
       })
 
       await clearPendingTrip()
+      setDriverPendingTrip(driverInfo.uid, false).catch(() => {})
       await updateDriverStatus(driverInfo.uid, 'offline')
       router.replace('/(driver)/home')
     } catch (err) {

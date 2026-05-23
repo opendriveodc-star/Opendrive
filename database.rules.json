@@ -11,19 +11,28 @@
           ".read": "auth != null",
           "$driverUid": {
             ".write":    "auth != null && auth.uid == $driverUid",
-            ".validate": "newData.hasChildren(['quotedPrice', 'estimatedDistance', 'driverName', 'rating', 'vehicleInfo', 'driverUid', 'createdAt']) && newData.child('quotedPrice').isNumber() && newData.child('quotedPrice').val() > 0"
+            ".validate": "newData.hasChildren(['quotedPrice', 'driverUid', 'driverName', 'vehicleBrand', 'licensePlate', 'rating', 'createdAt']) && newData.child('quotedPrice').isNumber() && newData.child('quotedPrice').val() > 0"
           }
         },
-        "ice": {
-          ".read": "auth != null",
-          "customer": {
-            ".write":    "auth != null",
-            ".validate": "newData.hasChildren(['candidates'])"
-          },
-          "driver": {
-            ".write":    "auth != null",
-            ".validate": "newData.hasChildren(['candidates'])"
-          }
+        "location": {
+          ".read":     "auth != null",
+          ".write":    "auth != null",
+          ".validate": "newData.hasChildren(['lat', 'lng', 'timestamp']) && newData.child('lat').isNumber() && newData.child('lng').isNumber() && newData.child('timestamp').isNumber()"
+        },
+        "trip_status": {
+          ".read":     "auth != null",
+          ".write":    "auth != null",
+          ".validate": "newData.isString() && newData.val().matches(/^(picked_up|completed)$/)"
+        },
+        "trip_info": {
+          ".read":     "auth != null",
+          ".write":    "auth != null",
+          ".validate": "newData.hasChildren(['driverName', 'driverPhone', 'vehicleBrand', 'licensePlate'])"
+        },
+        "rating": {
+          ".read":     "auth != null",
+          ".write":    "auth != null",
+          ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 5"
         },
         ".write": "auth != null && !newData.exists()"
       }

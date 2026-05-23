@@ -1,9 +1,9 @@
 // app/(driver)/wallet.tsx
 
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Linking, ScrollView, StatusBar, ActivityIndicator,
+  Linking, ScrollView, StatusBar, ActivityIndicator, TextInput, Animated,
 } from 'react-native'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -32,13 +32,27 @@ interface PaymentRecord {
   label:     string
 }
 
-function classifyPartner(address: string, label: string): string {
-  if (address === STELLAR.TRANSACTION_ADDRESS) return 'Phí ghi chuyến'
-  if (address === STELLAR.DISTRIBUTOR_ADDRESS)  return label === 'in' ? 'Thưởng từ hệ thống' : 'Phạt từ hệ thống'
-  if (address === STELLAR.ISSUER_ADDRESS)       return 'Phát hành ODC'
+function classifyPartner(address: string, label: string, t: (k: string) => string): string {
+  if (address === STELLAR.TRANSACTION_ADDRESS) return t('history.txFee')
+  if (address === STELLAR.DISTRIBUTOR_ADDRESS)  return label === 'in' ? t('history.rewardSystem') : t('history.penaltySystem')
+  if (address === STELLAR.ISSUER_ADDRESS)       return t('history.odcIssue')
   return address.slice(0, 6) + '...' + address.slice(-4)
 }
 
+function parseVNDate(s: string): Date | null {
+  const p = s.trim().split('/')
+  if (p.length !== 3) return null
+  const [dd, mm, yyyy] = p.map(Number)
+  if (!dd || !mm || !yyyy || yyyy < 2020) return null
+  const d = new Date(yyyy, mm - 1, dd)
+  return isNaN(d.getTime()) ? null : d
+}
+function autoFormatDate(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 8)
+  if (digits.length <= 2) return digits
+  if (digits.length <= 4) return digits.slice(0, 2) + '/' + digits.slice(2)
+  return digits.slice(0, 2) + '/' + digits.slice(2, 4) + '/' + digits.slice(4)
+}
 function formatDate(iso: string): string {
   const d = new Date(iso)
   return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -53,17 +67,23 @@ export default function WalletScreen() {
   const [txLoading,  setTxLoading]  = useState(false)
   const [hasMore,    setHasMore]    = useState(true)
   const [txError,    setTxError]    = useState<string | null>(null)
+  const [showFilter, setShowFilter] = useState(false)
+  const [fromDate,   setFromDate]   = useState('')
+  const [toDate,     setToDate]     = useState('')
+  const spinAnim = useRef(new Animated.Value(0)).current
+  const spinRef  = useRef<Animated.CompositeAnimation | null>(null)
 
   useEffect(() => { getDriverInfo().then(setDriverInfo) }, [])
 
   const { balance, loading, refresh } = useODCBalance(driverInfo?.stellarWallet ?? '')
 
-  const fetchPayments = useCallback(async (address: string, pagingToken?: string) => {
+  const fetchPayments = useCallback(async (address: string, pagingToken?: string, autoLoad = false) => {
     if (!address) return
     setTxLoading(true)
     setTxError(null)
     try {
-      const url = `${STELLAR.HORIZON_URL}/accounts/${address}/payments?limit=${PAGE_SIZE}&order=desc`
+      const limit = autoLoad ? 200 : PAGE_SIZE
+      const url = `${STELLAR.HORIZON_URL}/accounts/${address}/payments?limit=${limit}&order=desc`
         + (pagingToken ? `&cursor=${pagingToken}` : '')
       const res = await fetch(url)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -90,7 +110,7 @@ export default function WalletScreen() {
       setPayments(prev => pagingToken ? [...prev, ...records] : records)
       const lastRaw = rawRecords[rawRecords.length - 1]
       setCursor(lastRaw ? lastRaw.paging_token : null)
-      setHasMore(rawRecords.length === PAGE_SIZE)
+      setHasMore(rawRecords.length === limit)
     } catch (e) {
       setTxError((e as Error).message)
     } finally {
@@ -101,6 +121,62 @@ export default function WalletScreen() {
   useEffect(() => {
     if (driverInfo?.stellarWallet) fetchPayments(driverInfo.stellarWallet)
   }, [driverInfo?.stellarWallet, fetchPayments])
+
+  const filterActive = !!(parseVNDate(fromDate) || parseVNDate(toDate))
+
+  // Spin animation khi đang auto-load
+  useEffect(() => {
+    if (filterActive && txLoading) {
+      spinAnim.setValue(0)
+      spinRef.current = Animated.loop(
+        Animated.timing(spinAnim, { toValue: 1, duration: 1000, useNativeDriver: true })
+      )
+      spinRef.current.start()
+    } else {
+      spinRef.current?.stop()
+      spinRef.current = null
+    }
+    return () => { spinRef.current?.stop() }
+  }, [filterActive, txLoading])
+
+  // Tự động load thêm khi filter đang bật mà dữ liệu chưa đủ
+  useEffect(() => {
+    if (!filterActive || !hasMore || txLoading || !driverInfo?.stellarWallet || !cursor) return
+    const from = parseVNDate(fromDate)
+    if (!from) return
+    if (payments.length === 0) return
+    const oldest = new Date(payments[payments.length - 1].createdAt)
+    if (oldest > from) fetchPayments(driverInfo.stellarWallet, cursor, true)
+  }, [payments, fromDate, filterActive, hasMore, txLoading, driverInfo?.stellarWallet, cursor])
+
+  const filteredPayments = useMemo(() => {
+    const from = parseVNDate(fromDate)
+    const to   = parseVNDate(toDate)
+    if (!from && !to) return payments
+    if (to) to.setHours(23, 59, 59, 999)
+    return payments.filter(p => {
+      const d = new Date(p.createdAt)
+      if (from && d < from) return false
+      if (to   && d > to)   return false
+      return true
+    })
+  }, [payments, fromDate, toDate])
+
+  const stats = useMemo(() => {
+    const totalIn  = filteredPayments.filter(p => p.incoming).reduce((s, p) => s + p.amount, 0)
+    const totalOut = filteredPayments.filter(p => !p.incoming).reduce((s, p) => s + p.amount, 0)
+    const net      = totalIn - totalOut
+    const formatShort = (iso: string) => new Date(iso).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    let dateRange = ''
+    if (filterActive) {
+      dateRange = `${fromDate || '?'} – ${toDate || '?'}`
+    } else if (filteredPayments.length > 0) {
+      const oldest = filteredPayments[filteredPayments.length - 1].createdAt
+      const newest = filteredPayments[0].createdAt
+      dateRange = filteredPayments.length === 1 ? formatShort(newest) : `${formatShort(oldest)} – ${formatShort(newest)}`
+    }
+    return { totalIn, totalOut, net, dateRange, count: filteredPayments.length }
+  }, [filteredPayments, filterActive, fromDate, toDate])
 
   async function copyAddress() {
     if (!driverInfo?.stellarWallet) return
@@ -177,17 +253,82 @@ export default function WalletScreen() {
         {/* Lịch sử giao dịch */}
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
-            <Text style={styles.cardTitle}>Lịch sử giao dịch</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={styles.cardTitle}>{t('history.txTitle')}</Text>
+              <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+                {filterActive && txLoading && (
+                  <Animated.View style={{
+                    position: 'absolute', width: 44, height: 44, borderRadius: 22,
+                    borderWidth: 2.5, borderTopColor: BRAND, borderRightColor: BRAND,
+                    borderBottomColor: 'transparent', borderLeftColor: 'transparent',
+                    transform: [{ rotate: spinAnim.interpolate({ inputRange: [0,1], outputRange: ['0deg','360deg'] }) }],
+                  }} />
+                )}
+                <TouchableOpacity
+                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: showFilter ? BRAND : BRAND_LIGHT, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={() => setShowFilter(v => !v)}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Ionicons name="calendar-outline" size={19} color={showFilter ? '#fff' : BRAND} />
+                </TouchableOpacity>
+              </View>
+            </View>
             <TouchableOpacity onPress={() => router.push('/(driver)/history')} activeOpacity={0.7}>
-              <Text style={styles.seeTripsLink}>Lịch sử chuyến →</Text>
+              <Text style={styles.seeTripsLink}>{t('history.viewTrips')}</Text>
             </TouchableOpacity>
           </View>
+
+          {showFilter && (
+            <View style={[styles.filterRow, { marginBottom: 12 }]}>
+              <View style={styles.dateWrap}>
+                <Text style={styles.dateLabel}>{t('history.fromDate')}</Text>
+                <TextInput style={styles.dateInput} placeholder="DD/MM/YYYY" placeholderTextColor="#94A3B8"
+                  value={fromDate} onChangeText={v => setFromDate(autoFormatDate(v))} keyboardType="numeric" maxLength={10} />
+              </View>
+              <Ionicons name="arrow-forward-outline" size={14} color="#94A3B8" style={{ marginBottom: 4 }} />
+              <View style={styles.dateWrap}>
+                <Text style={styles.dateLabel}>{t('history.toDate')}</Text>
+                <TextInput style={styles.dateInput} placeholder="DD/MM/YYYY" placeholderTextColor="#94A3B8"
+                  value={toDate} onChangeText={v => setToDate(autoFormatDate(v))} keyboardType="numeric" maxLength={10} />
+              </View>
+              <TouchableOpacity onPress={() => { setFromDate(''); setToDate('') }} style={{ marginBottom: 4 }}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                <Ionicons name="close-circle" size={22} color="#94A3B8" />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Stats */}
+          {filteredPayments.length > 0 && (
+            <View style={styles.statsBar}>
+              {stats.dateRange !== '' && (
+                <View style={styles.statRow}>
+                  <Text style={styles.statLbl}>{t('history.period')}</Text>
+                  <Text style={[styles.statVal, { fontSize: 12 }]}>{stats.dateRange}</Text>
+                </View>
+              )}
+              <View style={styles.statRow}>
+                <Text style={styles.statLbl}>{t('history.totalIn')}</Text>
+                <Text style={[styles.statVal, { color: '#16A34A' }]}>+{stats.totalIn.toFixed(4)} ODC</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLbl}>{t('history.totalOut')}</Text>
+                <Text style={[styles.statVal, { color: '#DC2626' }]}>−{stats.totalOut.toFixed(4)} ODC</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLbl}>{t('history.netBalance')}</Text>
+                <Text style={[styles.statVal, { color: stats.net >= 0 ? '#16A34A' : '#DC2626' }]}>
+                  {stats.net >= 0 ? '+' : ''}{stats.net.toFixed(4)} ODC
+                </Text>
+              </View>
+            </View>
+          )}
 
           {txError ? (
             <View style={styles.centerMsg}>
               <Text style={styles.errorText}>{txError}</Text>
               <TouchableOpacity onPress={() => driverInfo?.stellarWallet && fetchPayments(driverInfo.stellarWallet)}>
-                <Text style={styles.retryText}>Thử lại</Text>
+                <Text style={styles.retryText}>{t('common.retry')}</Text>
               </TouchableOpacity>
             </View>
           ) : txLoading && payments.length === 0 ? (
@@ -201,14 +342,14 @@ export default function WalletScreen() {
             </View>
           ) : (
             <>
-              {payments.map((p, i) => {
-                const desc = classifyPartner(p.partner, p.label)
+              {filteredPayments.map((p, i) => {
+                const desc = classifyPartner(p.partner, p.label, t)
                 const sign = p.incoming ? '+' : '−'
                 const color = p.incoming ? '#16A34A' : '#DC2626'
                 return (
                   <TouchableOpacity
                     key={p.id}
-                    style={[styles.txRow, i < payments.length - 1 && styles.txRowBorder]}
+                    style={[styles.txRow, i < filteredPayments.length - 1 && styles.txRowBorder]}
                     onPress={() => openTx(p.hash)}
                     activeOpacity={0.7}
                   >
@@ -238,7 +379,7 @@ export default function WalletScreen() {
                 >
                   {txLoading
                     ? <ActivityIndicator size="small" color={BRAND} />
-                    : <Text style={styles.loadMoreText}>Tải thêm</Text>
+                    : <Text style={styles.loadMoreText}>{t('history.loadMore')}</Text>
                   }
                 </TouchableOpacity>
               )}
@@ -281,6 +422,15 @@ const styles = StyleSheet.create({
   explorerBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9' },
   explorerBtnText: { fontSize: 13, color: '#2563EB', fontWeight: '600' },
 
+  filterCard:  { marginHorizontal: 16, marginBottom: 8, backgroundColor: '#fff', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: BRAND_LIGHT },
+  filterRow:   { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
+  dateWrap:    { flex: 1, minWidth: 0 },
+  dateLabel:   { fontSize: 11, fontWeight: '600', color: BRAND, marginBottom: 4 },
+  dateInput:   { borderWidth: 1.5, borderColor: BRAND_LIGHT, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 7, fontSize: 14, color: '#1E293B', backgroundColor: BRAND_MUTED },
+  statsBar:    { marginBottom: 12, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: BRAND_MUTED, borderRadius: 12, borderWidth: 1, borderColor: BRAND_LIGHT, gap: 7 },
+  statRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statVal:     { fontSize: 13, fontWeight: '800', color: BRAND },
+  statLbl:     { fontSize: 12, fontWeight: '500', color: '#64748B' },
   txRow:       { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
   txRowBorder: { borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
   txIcon:      { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },

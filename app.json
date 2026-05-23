@@ -15,9 +15,6 @@
     "plugins": [
       "expo-router",
       [
-        "@config-plugins/react-native-webrtc"
-      ],
-      [
         "expo-location",
         {
           "locationWhenInUsePermission": "OpenDrive cần vị trí để tìm tài xế gần bạn",
@@ -76,9 +73,7 @@
       "bundleIdentifier": "com.opendrive.app",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "OpenDrive cần vị trí để tìm tài xế gần bạn",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "OpenDrive cần vị trí để cập nhật liên tục",
-        "NSMicrophoneUsageDescription": "Cần microphone cho kết nối WebRTC",
-        "NSCameraUsageDescription": "Cần camera cho kết nối WebRTC"
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "OpenDrive cần vị trí để cập nhật liên tục"
       },
       "bitcode": false
     },

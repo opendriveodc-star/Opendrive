@@ -1,12 +1,12 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView, ActivityIndicator,
-  Animated, Dimensions, Modal,
+  Animated, Dimensions, Modal, PanResponder,
 } from 'react-native'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { StatusBar } from 'expo-status-bar'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import * as SecureStore from 'expo-secure-store'
 import AsyncStorage from '@react-native-async-storage/async-storage'
@@ -29,28 +29,29 @@ import type { TransportModel } from '../../src/data/vehicles'
 import { TRIP } from '../../src/constants'
 import { nanoid } from '../../src/utils/nanoid'
 
-const BRAND       = '#1A2E5E'
-const BRAND_LIGHT = '#E8EDF6'
+const BRAND = '#1A2E5E'
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window')
 
-const PANEL_H = Math.min(Math.round(SCREEN_H * 0.46), 380)
-const PANEL_W = SCREEN_W - 32
+// Sheet snap levels
+const HANDLE_H  = 52
+const PARTIAL_H = Math.min(Math.round(SCREEN_H * 0.46), 380)
+const FULL_H    = Math.round(SCREEN_H * 0.72)
 
-// Increase AD_BOTTOM_H to 60 when AdMob banner is enabled
-const AD_BOTTOM_H  = 0
-const PANEL_BOTTOM = 16 + AD_BOTTOM_H
+// translateY values for each snap level (sheet container is FULL_H tall, bottom-anchored)
+const SNAP_Y: Record<0|1|2, number> = {
+  2: 0,
+  1: FULL_H - PARTIAL_H,
+  0: FULL_H - HANDLE_H,
+}
 
-// Pin tip is centered in the visible map area above the panel
-const TOP_BAR_H   = 80
-const PANEL_TOP_Y = SCREEN_H - PANEL_BOTTOM - PANEL_H
-const PIN_TOP_PCT = Math.round(((TOP_BAR_H + PANEL_TOP_Y) / 2 / SCREEN_H) * 100)
-
-// Vehicle carousel card width
-const INNER_W = PANEL_W - 40
+// Vehicle carousel card width (full-width panel minus 2×padding)
+const INNER_W = SCREEN_W - 40
 const CARD_W  = Math.floor(INNER_W / 2.2)
 
 const INIT_LAT = 10.7769
 const INIT_LNG = 106.7009
+
+const SAVED_KEY = 'opendrive_saved_locs'
 
 type Step = 0 | 1 | 2 | 3 | 4
 
@@ -58,11 +59,17 @@ interface LocPoint { lat: number; lng: number; address: string }
 interface SavedLoc  { name: string; lat: number; lng: number; address: string }
 interface SuggItem  { lat: number; lng: number; name: string }
 
-const SAVED_KEY = 'opendrive_saved_locs'
-
 // ─────────────────────────────────────────────
 export default function CustomerHomeScreen() {
-  const { t } = useTranslation()
+  const { t }    = useTranslation()
+  const insets   = useSafeAreaInsets()
+  const topBarH  = insets.top + 50   // safe area + buttons row
+
+  // Crosshair % for level 1 (default) – used as initial MapView prop
+  const pinTopPct = useMemo(() => {
+    const frac = (topBarH + (SCREEN_H - topBarH - PARTIAL_H) / 2) / SCREEN_H
+    return Math.round(frac * 100)
+  }, [topBarH])
 
   const [step,             setStep]             = useState<Step>(0)
   const [pickup,           setPickup]           = useState<LocPoint | null>(null)
@@ -86,30 +93,32 @@ export default function CustomerHomeScreen() {
   const [quotesSearching,  setQuotesSearching]  = useState(true)
   const [searchFailed,     setSearchFailed]     = useState(false)
   const [countdown,        setCountdown]        = useState(25)
+  const [sheetLevel,       setSheetLevel]       = useState<0|1|2>(1)
 
-  const mapRef      = useRef<MapViewHandle>(null)
-  const panelX      = useRef(new Animated.Value(0)).current
-  const isAnimating = useRef(false)
-  const stepRef     = useRef<Step>(0)
-  const progPan     = useRef(false)
-  const mapCenter   = useRef<{ lat: number; lng: number }>({ lat: INIT_LAT, lng: INIT_LNG })
-  const revTimer    = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const suggTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pollCount   = useRef(0)
-  const quotesRef   = useRef<TripQuote[]>([])
+  const mapRef       = useRef<MapViewHandle>(null)
+  const panelX       = useRef(new Animated.Value(0)).current
+  const sheetY       = useRef(new Animated.Value(SNAP_Y[1])).current
+  const isAnimating  = useRef(false)
+  const stepRef      = useRef<Step>(0)
+  const sheetLvlRef  = useRef<0|1|2>(1)
+  const progPan      = useRef(false)
+  const mapCenter    = useRef<{ lat: number; lng: number }>({ lat: INIT_LAT, lng: INIT_LNG })
+  const revTimer     = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const suggTimer    = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollCount    = useRef(0)
+  const quotesRef    = useRef<TripQuote[]>([])
+  const topBarHRef   = useRef(topBarH)
 
+  useEffect(() => { topBarHRef.current = topBarH }, [topBarH])
   useEffect(() => { stepRef.current = step }, [step])
   useEffect(() => { quotesRef.current = quotes }, [quotes])
-  useEffect(() => { loadSavedLocs() }, [])
-
-  // Cleanup poll on unmount
+  useEffect(() => { loadSavedLocs(); checkLockAndRetry() }, [])
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   // Quote polling when entering step 4
   useEffect(() => {
     if (step !== 4 || !activeTripId) return
-
     setQuotes([])
     setQuotesSearching(true)
     setSearchFailed(false)
@@ -120,18 +129,13 @@ export default function CustomerHomeScreen() {
     const timer = setInterval(async () => {
       pollCount.current++
       setCountdown(Math.max(0, 25 - pollCount.current * 5))
-
       try {
         const data = await rtdb.get<Record<string, TripQuote>>(`trips/${id}/quotes`)
         if (data) {
           const list = Object.values(data).sort((a, b) => a.quotedPrice - b.quotedPrice)
-          if (list.length > 0) {
-            setQuotes(list)
-            setQuotesSearching(false)
-          }
+          if (list.length > 0) { setQuotes(list); setQuotesSearching(false) }
         }
       } catch {}
-
       if (pollCount.current >= TRIP.QUOTE_POLL_MAX_ATTEMPTS) {
         clearInterval(timer)
         pollRef.current = null
@@ -144,10 +148,54 @@ export default function CustomerHomeScreen() {
     return () => { clearInterval(timer); pollRef.current = null }
   }, [step, activeTripId])
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  function panTo(lat: number, lng: number) {
+  // ── Sheet padding helpers ──────────────────────────────────────────────────
+  function visiblePad(level: 0|1|2) {
+    const panelH = level === 0 ? HANDLE_H : level === 1 ? PARTIAL_H : FULL_H
+    return { top: topBarHRef.current, bottom: panelH + (insets.bottom ?? 0) }
+  }
+
+  function crosshairFrac(level: 0|1|2) {
+    const { top, bottom } = visiblePad(level)
+    return (top + (SCREEN_H - top - bottom) / 2) / SCREEN_H
+  }
+
+  function snapToLevel(level: 0|1|2) {
+    sheetLvlRef.current = level
+    setSheetLevel(level)
+    Animated.spring(sheetY, {
+      toValue: SNAP_Y[level],
+      useNativeDriver: true,
+      tension: 68,
+      friction: 12,
+    }).start()
+    mapRef.current?.setCrosshairPosition(crosshairFrac(level))
+  }
+
+  // PanResponder for sheet drag handle
+  const panResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_, g) =>
+      Math.abs(g.dy) > 4 && Math.abs(g.dy) > Math.abs(g.dx),
+    onPanResponderMove: (_, g) => {
+      const base = SNAP_Y[sheetLvlRef.current]
+      const next = Math.max(SNAP_Y[2], Math.min(SNAP_Y[0], base + g.dy))
+      sheetY.setValue(next)
+    },
+    onPanResponderRelease: (_, g) => {
+      const base   = SNAP_Y[sheetLvlRef.current]
+      const projY  = base + g.dy + g.vy * 120
+      const dists  = ([0, 1, 2] as const).map(l => ({ l, d: Math.abs(SNAP_Y[l] - projY) }))
+      const target = dists.reduce((a, b) => a.d < b.d ? a : b).l
+      snapToLevel(target)
+    },
+  })).current
+
+  // ── Map pan helpers ────────────────────────────────────────────────────────
+  function panTo(lat: number, lng: number, level?: 0|1|2) {
+    const lv = level ?? sheetLvlRef.current
+    const { top, bottom } = visiblePad(lv)
     progPan.current = true
-    mapRef.current?.panTo(lat, lng)
+    mapRef.current?.panTo(lat, lng, top, bottom)
     setTimeout(() => { progPan.current = false }, 900)
   }
 
@@ -158,11 +206,8 @@ export default function CustomerHomeScreen() {
       panTo(loc.lat, loc.lng)
       const address = await reverseGeocode(loc.lat, loc.lng)
       const point   = { lat: loc.lat, lng: loc.lng, address }
-      if (stepRef.current === 1) {
-        setPickupText(address); setPickup(point)
-      } else if (stepRef.current === 2) {
-        setDestText(address); setDest(point)
-      }
+      if (stepRef.current === 1) { setPickupText(address); setPickup(point) }
+      else if (stepRef.current === 2) { setDestText(address); setDest(point) }
     } catch {
       showAlert(t('common.error'), 'Không lấy được vị trí hiện tại.')
     }
@@ -175,18 +220,14 @@ export default function CustomerHomeScreen() {
     revTimer.current = setTimeout(async () => {
       try {
         const address = await reverseGeocode(lat, lng)
-        if (stepRef.current === 1) {
-          setPickupText(address); setPickup({ lat, lng, address })
-        } else if (stepRef.current === 2) {
-          setDestText(address); setDest({ lat, lng, address })
-        }
+        if (stepRef.current === 1) { setPickupText(address); setPickup({ lat, lng, address }) }
+        else if (stepRef.current === 2) { setDestText(address); setDest({ lat, lng, address }) }
       } catch {}
     }, 600)
   }
 
   function handlePickupType(text: string) {
-    setPickupText(text)
-    setPickupSugg([])
+    setPickupText(text); setPickupSugg([])
     if (suggTimer.current) clearTimeout(suggTimer.current)
     if (text.length < 3) return
     suggTimer.current = setTimeout(async () => {
@@ -197,8 +238,7 @@ export default function CustomerHomeScreen() {
   }
 
   function handleDestType(text: string) {
-    setDestText(text)
-    setDestSugg([])
+    setDestText(text); setDestSugg([])
     if (suggTimer.current) clearTimeout(suggTimer.current)
     if (text.length < 3) return
     suggTimer.current = setTimeout(async () => {
@@ -209,17 +249,44 @@ export default function CustomerHomeScreen() {
   }
 
   function handlePickupSuggSelect(s: SuggItem) {
-    setPickupText(s.name)
-    setPickup({ lat: s.lat, lng: s.lng, address: s.name })
-    setPickupSugg([])
-    panTo(s.lat, s.lng)
+    setPickupText(s.name); setPickup({ lat: s.lat, lng: s.lng, address: s.name })
+    setPickupSugg([]); panTo(s.lat, s.lng)
   }
 
   function handleDestSuggSelect(s: SuggItem) {
-    setDestText(s.name)
-    setDest({ lat: s.lat, lng: s.lng, address: s.name })
-    setDestSugg([])
-    panTo(s.lat, s.lng)
+    setDestText(s.name); setDest({ lat: s.lat, lng: s.lng, address: s.name })
+    setDestSugg([]); panTo(s.lat, s.lng)
+  }
+
+  async function checkLockAndRetry() {
+    const lockRaw = await SecureStore.getItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL).catch(() => null)
+    if (lockRaw) {
+      const lockTs = parseInt(lockRaw)
+      if (lockTs > Date.now()) {
+        router.replace({ pathname: '/lock-screen', params: { lockedUntil: lockRaw, reason: t('lock.reason.frequentCancel') } })
+        return
+      } else {
+        SecureStore.deleteItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL).catch(() => {})
+      }
+    }
+    try {
+      const raw = await AsyncStorage.getItem('retry_trip_data')
+      if (!raw) return
+      await AsyncStorage.removeItem('retry_trip_data')
+      const d = JSON.parse(raw)
+      if (d.vehicleType) setVehicle(d.vehicleType)
+      if (d.pickupLat && d.pickupAddress) {
+        setPickup({ lat: d.pickupLat, lng: d.pickupLng, address: d.pickupAddress })
+        setPickupText(d.pickupAddress)
+      }
+      if (d.dropLat && d.destAddress) {
+        setDest({ lat: d.dropLat, lng: d.dropLng, address: d.destAddress })
+        setDestText(d.destAddress)
+      }
+      if (d.note) setNote(d.note)
+      if (d.estimatedKm) setDistKm(d.estimatedKm)
+      setTimeout(() => goToStep(3), 300)
+    } catch {}
   }
 
   // ── Saved locations ───────────────────────────────────────────────────────
@@ -231,29 +298,21 @@ export default function CustomerHomeScreen() {
   }
 
   function selectSavedLoc(loc: SavedLoc) {
-    if (stepRef.current === 1) {
-      setPickupText(loc.address); setPickup({ lat: loc.lat, lng: loc.lng, address: loc.address })
-    } else if (stepRef.current === 2) {
-      setDestText(loc.address); setDest({ lat: loc.lat, lng: loc.lng, address: loc.address })
-    }
+    if (stepRef.current === 1) { setPickupText(loc.address); setPickup({ lat: loc.lat, lng: loc.lng, address: loc.address }) }
+    else if (stepRef.current === 2) { setDestText(loc.address); setDest({ lat: loc.lat, lng: loc.lng, address: loc.address }) }
     panTo(loc.lat, loc.lng)
   }
 
   function openSaveModal() {
     const point = stepRef.current === 1 ? pickup : dest
     if (!point) return
-    setSaveModalPoint(point)
-    setSaveModalName('')
-    setSaveModalVisible(true)
+    setSaveModalPoint(point); setSaveModalName(''); setSaveModalVisible(true)
   }
 
   async function handleSaveConfirm() {
     if (!saveModalPoint || !saveModalName.trim()) return
     const name    = saveModalName.trim().slice(0, 20)
-    const newList = [
-      { name, ...saveModalPoint },
-      ...savedLocs.filter(l => l.name !== name),
-    ].slice(0, 6)
+    const newList = [{ name, ...saveModalPoint }, ...savedLocs.filter(l => l.name !== name)].slice(0, 6)
     setSavedLocs(newList)
     await AsyncStorage.setItem(SAVED_KEY, JSON.stringify(newList)).catch(() => {})
     setSaveModalVisible(false)
@@ -271,18 +330,23 @@ export default function CustomerHomeScreen() {
     isAnimating.current = true
     const goingForward = next > stepRef.current
     Animated.timing(panelX, {
-      toValue: goingForward ? -PANEL_W : PANEL_W,
+      toValue: goingForward ? -SCREEN_W : SCREEN_W,
       duration: 180,
       useNativeDriver: true,
     }).start(() => {
       setStep(next)
       requestAnimationFrame(() => {
-        panelX.setValue(goingForward ? PANEL_W : -PANEL_W)
+        panelX.setValue(goingForward ? SCREEN_W : -SCREEN_W)
         Animated.spring(panelX, {
           toValue: 0, tension: 85, friction: 11, useNativeDriver: true,
         }).start(() => { isAnimating.current = false })
       })
     })
+  }
+
+  function handleBack() {
+    if (step === 0) return
+    goToStep((step - 1) as Step)
   }
 
   function confirmVehicle() { goToStep(1) }
@@ -322,7 +386,7 @@ export default function CustomerHomeScreen() {
   }
 
   function handleHistory() {
-    showAlert(t('history.title'), 'Tính năng đang phát triển.')
+    router.push('/(customer)/history')
   }
 
   // ── Book ride ─────────────────────────────────────────────────────────────
@@ -369,10 +433,20 @@ export default function CustomerHomeScreen() {
     }
   }
 
+  function handlePreviewDriver(quote: TripQuote) {
+    if (!quote.driverLat || !quote.driverLng || !pickup) return
+    mapRef.current?.showDriverMarker(quote.driverLat, quote.driverLng)
+    mapRef.current?.showCustomerMarker(pickup.lat, pickup.lng)
+    mapRef.current?.fitBoundsToMarkers(
+      pickup.lat, pickup.lng,
+      quote.driverLat, quote.driverLng,
+      PARTIAL_H,
+    )
+  }
+
   async function handleSelectDriver(quote: TripQuote) {
     if (!activeTripId) return
     try {
-      // Kiểm tra quote còn trên RTDB không — tài xế có thể đã hủy trong 5s
       const still = await rtdb.get(`trips/${activeTripId}/quotes/${quote.driverUid}`)
       if (!still) {
         showAlert('Tài xế đã hủy', 'Tài xế này đã hủy báo giá, vui lòng chọn tài xế khác.')
@@ -396,13 +470,14 @@ export default function CustomerHomeScreen() {
   async function handleCancelSearch() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     if (activeTripId) await rtdb.delete(`trips/${activeTripId}`).catch(() => {})
-    setActiveTripId(null)
-    setQuotes([])
-    setSearchFailed(false)
+    mapRef.current?.hideDriverMarker()
+    setActiveTripId(null); setQuotes([]); setSearchFailed(false)
     goToStep(3)
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
+  const locateBtnBottom = PARTIAL_H + 16
+
   return (
     <View style={styles.root}>
       <StatusBar style="light" translucent backgroundColor="transparent" />
@@ -414,17 +489,19 @@ export default function CustomerHomeScreen() {
         lat={INIT_LAT}
         lng={INIT_LNG}
         mode="picker"
-        crosshairTopPct={PIN_TOP_PCT}
+        crosshairTopPct={pinTopPct}
         onCenterChange={handleCenterChange}
         onMapReady={fetchCurrentLocation}
       />
 
       {/* Top bar */}
       <SafeAreaView style={styles.topBar} edges={['top']}>
-        <TouchableOpacity style={styles.topBtn} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={20} color="#fff" />
+        {/* Left: logout (ALL steps) */}
+        <TouchableOpacity style={styles.topBtn} onPress={handleLogout} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="log-out-outline" size={20} color={BRAND} />
         </TouchableOpacity>
 
+        {/* Center */}
         <View style={styles.dotsArea}>
           {(step === 1 || step === 2) ? (
             <View style={styles.dragHintPill}>
@@ -435,93 +512,113 @@ export default function CustomerHomeScreen() {
             ([0, 1, 2, 3] as const).map(i => (
               <View key={i} style={[styles.dot, step >= i && styles.dotActive]} />
             ))
-          ) : (
+          ) : quotesSearching && !searchFailed ? (
             <ActivityIndicator color="#fff" size="small" />
-          )}
+          ) : null}
         </View>
 
-        <TouchableOpacity style={styles.topBtn} onPress={handleHistory}>
-          <Ionicons name="time-outline" size={20} color="#fff" />
+        {/* Right: history (ALL steps) */}
+        <TouchableOpacity style={styles.topBtn} onPress={handleHistory} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="time-outline" size={20} color={BRAND} />
         </TouchableOpacity>
       </SafeAreaView>
 
-      {/* Panel: outer View = shadow only, inner View = overflow:hidden clip */}
-      <View style={styles.panelContainer}>
-        <View style={styles.panelClipper}>
-          <Animated.View style={[styles.panelContent, { transform: [{ translateX: panelX }] }]}>
-            {step === 0 && (
-              <VehiclePanel
-                vehicle={vehicle}
-                transportModel={transportModel}
-                onVehicleChange={setVehicle}
-                onTransportModelChange={(m: TransportModel) => {
-                  setTransportModel(m)
-                  const model = TRANSPORT_MODELS.find(x => x.key === m) ?? TRANSPORT_MODELS[0]
-                  setVehicle(model.vehicles[0].key as VehicleType)
-                }}
-                onConfirm={confirmVehicle}
-                t={t}
-              />
-            )}
-            {step === 1 && (
-              <PickupPanel
-                text={pickupText}
-                onChangeText={handlePickupType}
-                onGPS={fetchCurrentLocation}
-                onSave={openSaveModal}
-                savedLocs={savedLocs}
-                onSelectSaved={selectSavedLoc}
-                onRemoveSaved={handleRemoveSaved}
-                suggestions={pickupSugg}
-                onSelectSugg={handlePickupSuggSelect}
-                onBack={() => goToStep(0)}
-                onConfirm={confirmPickup}
-                t={t}
-              />
-            )}
-            {step === 2 && (
-              <DestPanel
-                text={destText}
-                onChangeText={handleDestType}
-                onGPS={fetchCurrentLocation}
-                onSave={openSaveModal}
-                savedLocs={savedLocs}
-                onSelectSaved={selectSavedLoc}
-                onRemoveSaved={handleRemoveSaved}
-                suggestions={destSugg}
-                onSelectSugg={handleDestSuggSelect}
-                onBack={() => goToStep(1)}
-                onConfirm={confirmDest}
-                t={t}
-              />
-            )}
-            {step === 3 && (
-              <BookPanel
-                pickup={pickup!}
-                dest={dest!}
-                note={note}
-                distKm={distKm}
-                onNoteChange={setNote}
-                onBack={() => goToStep(2)}
-                onBook={handleBook}
-                loading={bookLoading}
-                t={t}
-              />
-            )}
-            {step === 4 && (
-              <QuotesPanel
-                searching={quotesSearching}
-                searchFailed={searchFailed}
-                countdown={countdown}
-                quotes={quotes}
-                onSelectDriver={handleSelectDriver}
-                onCancel={handleCancelSearch}
-                t={t}
-              />
-            )}
-          </Animated.View>
+      {/* Locate button – only for pickup/dest steps */}
+      {(step === 1 || step === 2) && (
+        <TouchableOpacity
+          style={[styles.locateBtn, { bottom: locateBtnBottom }]}
+          onPress={fetchCurrentLocation}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="locate" size={20} color={BRAND} />
+        </TouchableOpacity>
+      )}
+
+      {/* Sheet – full-width, bottom-anchored, slide levels */}
+      <Animated.View style={[styles.sheet, { transform: [{ translateY: sheetY }] }]}>
+        {/* Drag handle */}
+        <View style={styles.handleArea} {...panResponder.panHandlers}>
+          <View style={styles.handleBar} />
         </View>
-      </View>
+
+        {/* Content – horizontally animated between steps */}
+        <Animated.View style={[styles.panelContent, { transform: [{ translateX: panelX }] }]}>
+          {step === 0 && (
+            <VehiclePanel
+              vehicle={vehicle}
+              transportModel={transportModel}
+              onVehicleChange={setVehicle}
+              onTransportModelChange={(m: TransportModel) => {
+                setTransportModel(m)
+                const model = TRANSPORT_MODELS.find(x => x.key === m) ?? TRANSPORT_MODELS[0]
+                setVehicle(model.vehicles[0].key as VehicleType)
+              }}
+              onConfirm={confirmVehicle}
+              insetBottom={insets.bottom}
+              t={t}
+            />
+          )}
+          {step === 1 && (
+            <PickupPanel
+              text={pickupText}
+              onChangeText={handlePickupType}
+              savedLocs={savedLocs}
+              onSelectSaved={selectSavedLoc}
+              onRemoveSaved={handleRemoveSaved}
+              suggestions={pickupSugg}
+              onSelectSugg={handlePickupSuggSelect}
+              onConfirm={confirmPickup}
+              onBack={handleBack}
+              onSave={openSaveModal}
+              insetBottom={insets.bottom}
+              t={t}
+            />
+          )}
+          {step === 2 && (
+            <DestPanel
+              text={destText}
+              onChangeText={handleDestType}
+              savedLocs={savedLocs}
+              onSelectSaved={selectSavedLoc}
+              onRemoveSaved={handleRemoveSaved}
+              suggestions={destSugg}
+              onSelectSugg={handleDestSuggSelect}
+              onConfirm={confirmDest}
+              onBack={handleBack}
+              onSave={openSaveModal}
+              insetBottom={insets.bottom}
+              t={t}
+            />
+          )}
+          {step === 3 && (
+            <BookPanel
+              pickup={pickup!}
+              dest={dest!}
+              note={note}
+              distKm={distKm}
+              onNoteChange={setNote}
+              onBook={handleBook}
+              loading={bookLoading}
+              onBack={handleBack}
+              insetBottom={insets.bottom}
+              t={t}
+            />
+          )}
+          {step === 4 && (
+            <QuotesPanel
+              searching={quotesSearching}
+              searchFailed={searchFailed}
+              countdown={countdown}
+              quotes={quotes}
+              onPreviewDriver={handlePreviewDriver}
+              onSelectDriver={handleSelectDriver}
+              onCancel={handleCancelSearch}
+              insetBottom={insets.bottom}
+              t={t}
+            />
+          )}
+        </Animated.View>
+      </Animated.View>
 
       {/* Save location modal */}
       <Modal
@@ -552,10 +649,7 @@ export default function CustomerHomeScreen() {
               onSubmitEditing={handleSaveConfirm}
             />
             <View style={styles.modalBtns}>
-              <TouchableOpacity
-                style={styles.modalCancelBtn}
-                onPress={() => setSaveModalVisible(false)}
-              >
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setSaveModalVisible(false)}>
                 <Text style={styles.modalCancelText}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -578,8 +672,8 @@ export default function CustomerHomeScreen() {
 // ─────────────────────────────────────────────
 
 function AddressInput({
-  value, onChangeText, placeholder, autoFocus,
-}: { value: string; onChangeText: (t: string) => void; placeholder: string; autoFocus?: boolean }) {
+  value, onChangeText, placeholder, autoFocus, onBookmark,
+}: { value: string; onChangeText: (t: string) => void; placeholder: string; autoFocus?: boolean; onBookmark?: () => void }) {
   return (
     <View style={sub.inputWrap}>
       <Ionicons name="location-outline" size={18} color={BRAND} style={{ marginRight: 8 }} />
@@ -592,6 +686,15 @@ function AddressInput({
         autoFocus={autoFocus}
         returnKeyType="search"
       />
+      {onBookmark && (
+        <TouchableOpacity
+          onPress={onBookmark}
+          hitSlop={{ top: 8, bottom: 8, left: 6, right: 4 }}
+          style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#E8EDF6', justifyContent: 'center', alignItems: 'center' }}
+        >
+          <Ionicons name="bookmark" size={16} color={BRAND} />
+        </TouchableOpacity>
+      )}
     </View>
   )
 }
@@ -606,21 +709,10 @@ function SuggRow({ item, onPress }: { item: SuggItem; onPress: () => void }) {
 }
 
 function SavedChips({
-  savedLocs, onSelect, onRemove, onGPS, t,
-}: { savedLocs: SavedLoc[]; onSelect: (l: SavedLoc) => void; onRemove: (name: string) => void; onGPS: () => void; t: any }) {
+  savedLocs, onSelect, onRemove, t,
+}: { savedLocs: SavedLoc[]; onSelect: (l: SavedLoc) => void; onRemove: (name: string) => void; t: any }) {
   return (
     <View style={sub.chipsWrap}>
-      {/* GPS chip – permanent, cannot be deleted */}
-      <TouchableOpacity
-        style={[sub.chipContainer, sub.chipGps]}
-        onPress={onGPS}
-        activeOpacity={0.75}
-      >
-        <Ionicons name="locate-outline" size={13} color="#fff" />
-        <Text style={[sub.chipText, sub.chipGpsText]}>{t('trip.useMyLocation')}</Text>
-      </TouchableOpacity>
-
-      {/* Saved chips */}
       {savedLocs.map((loc, i) => (
         <View key={i} style={sub.chipContainer}>
           <TouchableOpacity style={sub.chipContent} onPress={() => onSelect(loc)}>
@@ -641,20 +733,14 @@ function SavedChips({
 }
 
 // Panel 0 – Transport model + Vehicle carousel
-function VehiclePanel({
-  vehicle, transportModel, onVehicleChange, onTransportModelChange, onConfirm, t,
-}: any) {
+function VehiclePanel({ vehicle, transportModel, onVehicleChange, onTransportModelChange, onConfirm, insetBottom, t }: any) {
   const modelConfig = TRANSPORT_MODELS.find((m: any) => m.key === transportModel) ?? TRANSPORT_MODELS[0]
   const vehicles    = modelConfig.vehicles
-
   return (
     <View style={sub.panelFlex}>
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        <View style={sub.panelHeader}>
-          <Text style={sub.panelTitle}>{t('trip.selectVehicleTitle')}</Text>
-        </View>
+        <Text style={sub.panelTitle}>{t('trip.selectVehicleTitle')}</Text>
 
-        {/* Transport model toggle */}
         <Text style={[sub.sectionLabel, { marginTop: 10 }]}>{t('trip.transportModel')}</Text>
         <View style={sub.transportRow}>
           {TRANSPORT_MODELS.map((model: any) => {
@@ -675,7 +761,6 @@ function VehiclePanel({
           })}
         </View>
 
-        {/* Vehicle carousel */}
         <Text style={sub.sectionLabel}>{t('trip.vehicleType')}</Text>
         <ScrollView
           horizontal
@@ -708,7 +793,7 @@ function VehiclePanel({
         <Text style={sub.vehicleScrollHint}>{t('trip.vehicleScrollHint')}</Text>
       </ScrollView>
 
-      <TouchableOpacity style={[sub.confirmBtn, { marginTop: 6 }]} onPress={onConfirm} activeOpacity={0.85}>
+      <TouchableOpacity style={[sub.confirmBtn, { marginBottom: insetBottom || 4 }]} onPress={onConfirm} activeOpacity={0.85}>
         <Text style={sub.confirmBtnText}>{t('common.continue')}</Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
       </TouchableOpacity>
@@ -717,27 +802,12 @@ function VehiclePanel({
 }
 
 // Panel 1 – Pickup location
-function PickupPanel({
-  text, onChangeText, onGPS, onSave, savedLocs, onSelectSaved, onRemoveSaved,
-  suggestions, onSelectSugg, onBack, onConfirm, t,
-}: any) {
+function PickupPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSaved, suggestions, onSelectSugg, onConfirm, onBack, onSave, insetBottom, t }: any) {
   const showSugg = suggestions.length > 0
   return (
     <View style={sub.panelFlex}>
-      <View style={sub.panelHeader}>
-        <TouchableOpacity style={sub.backBtn} onPress={onBack}>
-          <Ionicons name="arrow-back-outline" size={18} color={BRAND} />
-        </TouchableOpacity>
-        <Text style={sub.panelTitle}>{t('trip.stepPickup')}</Text>
-        <TouchableOpacity style={sub.iconBtn} onPress={onSave}>
-          <Ionicons name="bookmark-outline" size={18} color={BRAND} />
-        </TouchableOpacity>
-      </View>
-      <AddressInput
-        value={text}
-        onChangeText={onChangeText}
-        placeholder={t('trip.pickupPlaceholder')}
-      />
+      <Text style={sub.panelTitle}>{t('trip.stepPickup')}</Text>
+      <AddressInput value={text} onChangeText={onChangeText} placeholder={t('trip.pickupPlaceholder')} onBookmark={onSave} />
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {showSugg ? (
           <View style={sub.suggList}>
@@ -746,46 +816,27 @@ function PickupPanel({
             ))}
           </View>
         ) : (
-          <SavedChips
-            savedLocs={savedLocs}
-            onSelect={onSelectSaved}
-            onRemove={onRemoveSaved}
-            onGPS={onGPS}
-            t={t}
-          />
+          <SavedChips savedLocs={savedLocs} onSelect={onSelectSaved} onRemove={onRemoveSaved} t={t} />
         )}
       </ScrollView>
-      <TouchableOpacity style={[sub.confirmBtn, { marginTop: 8 }]} onPress={onConfirm} activeOpacity={0.85}>
+      <TouchableOpacity style={sub.confirmBtn} onPress={onConfirm} activeOpacity={0.85}>
         <Text style={sub.confirmBtnText}>{t('trip.confirmPickup')}</Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
+      </TouchableOpacity>
+      <TouchableOpacity style={[sub.backBtnWide, { marginBottom: insetBottom || 4 }]} onPress={onBack} activeOpacity={0.7}>
+        <Text style={sub.backBtnWideText}>{t('common.back')}</Text>
       </TouchableOpacity>
     </View>
   )
 }
 
 // Panel 2 – Destination
-function DestPanel({
-  text, onChangeText, onGPS, onSave, savedLocs, onSelectSaved, onRemoveSaved,
-  suggestions, onSelectSugg, onBack, onConfirm, t,
-}: any) {
+function DestPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSaved, suggestions, onSelectSugg, onConfirm, onBack, onSave, insetBottom, t }: any) {
   const showSugg = suggestions.length > 0
   return (
     <View style={sub.panelFlex}>
-      <View style={sub.panelHeader}>
-        <TouchableOpacity style={sub.backBtn} onPress={onBack}>
-          <Ionicons name="arrow-back-outline" size={18} color={BRAND} />
-        </TouchableOpacity>
-        <Text style={sub.panelTitle}>{t('trip.stepDest')}</Text>
-        <TouchableOpacity style={sub.iconBtn} onPress={onSave}>
-          <Ionicons name="bookmark-outline" size={18} color={BRAND} />
-        </TouchableOpacity>
-      </View>
-      <AddressInput
-        value={text}
-        onChangeText={onChangeText}
-        placeholder={t('trip.destPlaceholder')}
-        autoFocus
-      />
+      <Text style={sub.panelTitle}>{t('trip.stepDest')}</Text>
+      <AddressInput value={text} onChangeText={onChangeText} placeholder={t('trip.destPlaceholder')} autoFocus onBookmark={onSave} />
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {showSugg ? (
           <View style={sub.suggList}>
@@ -794,45 +845,40 @@ function DestPanel({
             ))}
           </View>
         ) : (
-          <SavedChips
-            savedLocs={savedLocs}
-            onSelect={onSelectSaved}
-            onRemove={onRemoveSaved}
-            onGPS={onGPS}
-            t={t}
-          />
+          <SavedChips savedLocs={savedLocs} onSelect={onSelectSaved} onRemove={onRemoveSaved} t={t} />
         )}
       </ScrollView>
-      <TouchableOpacity style={[sub.confirmBtn, { marginTop: 8 }]} onPress={onConfirm} activeOpacity={0.85}>
+      <TouchableOpacity style={sub.confirmBtn} onPress={onConfirm} activeOpacity={0.85}>
         <Text style={sub.confirmBtnText}>{t('trip.confirmDest')}</Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
+      </TouchableOpacity>
+      <TouchableOpacity style={[sub.backBtnWide, { marginBottom: insetBottom || 4 }]} onPress={onBack} activeOpacity={0.7}>
+        <Text style={sub.backBtnWideText}>{t('common.back')}</Text>
       </TouchableOpacity>
     </View>
   )
 }
 
 // Panel 3 – Summary + Note + Book
-function BookPanel({
-  pickup, dest, note, distKm,
-  onNoteChange, onBack, onBook, loading, t,
-}: any) {
+function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, onBack, insetBottom, t }: any) {
   return (
     <View style={sub.panelFlex}>
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <Text style={sub.panelTitle}>{t('trip.confirmPickup')}</Text>
         <View style={sub.routeSummary}>
           <View style={sub.routeRow}>
             <Ionicons name="location-sharp" size={16} color={BRAND} style={sub.routeIcon} />
             <View style={{ flex: 1 }}>
               <Text style={sub.routePointLabel}>{t('trip.pickupLabel')}</Text>
-              <Text style={sub.routeText} numberOfLines={1}>{pickup?.address}</Text>
+              <Text style={sub.routeText} numberOfLines={2}>{pickup?.address}</Text>
             </View>
           </View>
           <View style={sub.routeLine} />
           <View style={sub.routeRow}>
-            <Ionicons name="location-sharp" size={16} color={BRAND} style={sub.routeIcon} />
+            <Ionicons name="location-sharp" size={16} color="#EA580C" style={sub.routeIcon} />
             <View style={{ flex: 1 }}>
               <Text style={sub.routePointLabel}>{t('trip.destLabel')}</Text>
-              <Text style={sub.routeText} numberOfLines={1}>{dest?.address}</Text>
+              <Text style={sub.routeText} numberOfLines={2}>{dest?.address}</Text>
             </View>
           </View>
           {distKm != null && (
@@ -840,9 +886,7 @@ function BookPanel({
               <View style={sub.routeLine} />
               <View style={[sub.routeRow, { alignItems: 'center' }]}>
                 <Ionicons name="navigate-outline" size={16} color={BRAND} style={{ flexShrink: 0 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={sub.routeText}>{t('trip.estDistance', { km: distKm })}</Text>
-                </View>
+                <Text style={[sub.routeText, { marginLeft: 8 }]}>{t('trip.estDistance', { km: distKm })}</Text>
               </View>
             </>
           )}
@@ -864,7 +908,7 @@ function BookPanel({
       </ScrollView>
 
       <TouchableOpacity
-        style={[sub.confirmBtn, { marginTop: 8 }, loading && { opacity: 0.7 }]}
+        style={[sub.confirmBtn, loading && { opacity: 0.7 }]}
         onPress={onBook}
         disabled={loading}
         activeOpacity={0.85}
@@ -875,25 +919,20 @@ function BookPanel({
               <Ionicons name="megaphone-outline" size={18} color="#fff" /></>
         }
       </TouchableOpacity>
-
-      <TouchableOpacity style={sub.backTextBtn} onPress={onBack}>
-        <Ionicons name="arrow-back-outline" size={14} color="#64748B" />
-        <Text style={sub.backTextBtnLabel}>{t('common.back')}</Text>
+      <TouchableOpacity style={[sub.backBtnWide, { marginBottom: insetBottom || 4 }]} onPress={onBack} activeOpacity={0.7}>
+        <Text style={sub.backBtnWideText}>{t('common.back')}</Text>
       </TouchableOpacity>
     </View>
   )
 }
 
 // Panel 4 – Quotes from drivers
-function QuotesPanel({
-  searching, searchFailed, countdown, quotes, onSelectDriver, onCancel, t,
-}: any) {
+function QuotesPanel({ searching, searchFailed, countdown, quotes, onPreviewDriver, onSelectDriver, onCancel, insetBottom, t }: any) {
   return (
-    // Negative margins to fill the panel container including padding
-    <View style={{ flex: 1, flexDirection: 'column', margin: -20 }}>
+    <View style={sub.panelFlex}>
       {/* Header */}
-      <View style={[sub.panelHeader, { paddingHorizontal: 20, paddingTop: 16, marginBottom: 4 }]}>
-        <Text style={[sub.panelTitle, { textAlign: 'left' }]}>
+      <View style={sub.quotesHeader}>
+        <Text style={sub.quotesTitle}>
           {searchFailed
             ? t('trip.noDriver')
             : quotes.length > 0
@@ -901,39 +940,37 @@ function QuotesPanel({
               : t('trip.searching')}
         </Text>
         {searching && !searchFailed && (
-          <Text style={{ fontSize: 13, color: '#64748B', fontWeight: '600' }}>{countdown}s</Text>
+          <Text style={sub.quotesCountdown}>{countdown}s</Text>
         )}
       </View>
 
       {/* Content */}
       <View style={{ flex: 1 }}>
         {quotes.length > 0 ? (
-          <QuoteList quotes={quotes} onSelect={onSelectDriver} />
+          <QuoteList quotes={quotes} onSelect={onSelectDriver} onPreview={onPreviewDriver} />
         ) : searching ? (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <View style={sub.quotesCenter}>
             <ActivityIndicator size="large" color={BRAND} />
-            <Text style={{ marginTop: 10, fontSize: 13, color: '#94A3B8' }}>
-              {t('trip.searching')}
-            </Text>
+            <Text style={sub.quotesHint}>{t('trip.searching')}</Text>
           </View>
         ) : (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
+          <View style={sub.quotesCenter}>
             <Ionicons name="search-outline" size={44} color="#CBD5E1" />
-            <Text style={{ fontSize: 14, color: '#64748B', textAlign: 'center', marginTop: 10 }}>
-              {t('trip.noDriver')}
-            </Text>
+            <Text style={sub.quotesHint}>{t('trip.noDriver')}</Text>
           </View>
         )}
       </View>
 
-      {/* Cancel button */}
-      <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
-        <TouchableOpacity style={sub.cancelBtn} onPress={onCancel} activeOpacity={0.85}>
-          <Text style={sub.cancelBtnText}>
-            {searchFailed ? t('common.retry') : t('cancel.yes')}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {/* Cancel */}
+      <TouchableOpacity
+        style={[sub.cancelBtn, { marginBottom: insetBottom || 4 }]}
+        onPress={onCancel}
+        activeOpacity={0.85}
+      >
+        <Text style={sub.cancelBtnText}>
+          {searchFailed ? t('common.retry') : t('cancel.yes')}
+        </Text>
+      </TouchableOpacity>
     </View>
   )
 }
@@ -949,13 +986,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8,
+    zIndex: 10,
   },
   topBtn: {
     width: 36, height: 36, borderRadius: 18,
-    backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center',
-    elevation: 4, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 4,
+    backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center',
+    elevation: 2,
+    shadowColor: BRAND, shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
   },
-  dotsArea: { flex: 1, flexDirection: 'row', gap: 6, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
+  dotsArea: {
+    flex: 1, flexDirection: 'row', gap: 6,
+    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4,
+  },
   dot:       { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
   dotActive: { backgroundColor: '#fff' },
 
@@ -966,20 +1008,43 @@ const styles = StyleSheet.create({
   },
   dragHintText: { color: '#fff', fontSize: 12 },
 
-  panelContainer: {
-    position: 'absolute', bottom: PANEL_BOTTOM, left: 16, right: 16,
-    borderRadius: 20, backgroundColor: '#fff',
-    elevation: 10,
+  locateBtn: {
+    position: 'absolute', right: 16,
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center',
+    elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8,
+    zIndex: 20,
+  },
+
+  // Sheet
+  sheet: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    height: FULL_H,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    elevation: 16,
     shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 16, shadowOffset: { width: 0, height: -4 },
   },
-  panelClipper: { overflow: 'hidden', borderRadius: 20, height: PANEL_H },
-  panelContent:  { padding: 20, height: PANEL_H },
+  handleArea: {
+    height: HANDLE_H,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  handleBar: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: '#CBD5E1',
+  },
+  panelContent: {
+    height: PARTIAL_H - HANDLE_H,
+    overflow: 'hidden',
+    paddingHorizontal: 20,
+  },
 
-  // Save modal – appears in map area, not over the panel
+  // Save modal
   modalOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'flex-start', alignItems: 'center',
-    paddingTop: TOP_BAR_H + 48, paddingHorizontal: 24,
+    paddingTop: 120, paddingHorizontal: 24,
   },
   modalBox:          { width: '100%', backgroundColor: '#fff', borderRadius: 20, padding: 20 },
   modalTitle:        { fontSize: 16, fontWeight: '700', color: '#0F172A', marginBottom: 12 },
@@ -995,13 +1060,16 @@ const styles = StyleSheet.create({
 })
 
 const sub = StyleSheet.create({
-  // Common panel flex container
-  panelFlex: { flex: 1, flexDirection: 'column' },
+  panelFlex:  { flex: 1, flexDirection: 'column' },
 
-  panelHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  panelTitle:  { flex: 1, fontSize: 16, fontWeight: '700', color: '#0F172A', textAlign: 'center' },
-  backBtn:     { width: 32, height: 32, borderRadius: 16, backgroundColor: BRAND_LIGHT, justifyContent: 'center', alignItems: 'center' },
-  iconBtn:     { width: 32, height: 32, borderRadius: 16, backgroundColor: BRAND_LIGHT, justifyContent: 'center', alignItems: 'center' },
+  panelTitle: {
+    fontSize: 16, fontWeight: '700', color: '#0F172A',
+    marginBottom: 12, marginTop: 4,
+  },
+
+  panelHeaderRow:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10, marginTop: 0 },
+  panelBackBtn:    { width: 32, height: 32, borderRadius: 16, backgroundColor: '#E8EDF6', justifyContent: 'center', alignItems: 'center' },
+  panelTitleInRow: { flex: 1, fontSize: 16, fontWeight: '700', color: '#0F172A' },
 
   inputWrap: {
     flexDirection: 'row', alignItems: 'center',
@@ -1011,32 +1079,29 @@ const sub = StyleSheet.create({
   },
   input: { flex: 1, fontSize: 14, color: '#0F172A', paddingVertical: 10 },
 
-  // Saved chips – wrap layout
+  // Saved chips
   chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingTop: 4 },
   chipContainer: {
     flexDirection: 'row', alignItems: 'center',
     borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 20,
     backgroundColor: '#F8FAFC', overflow: 'hidden',
   },
-  chipGps: {
-    backgroundColor: BRAND, borderColor: BRAND,
-    paddingLeft: 10, paddingRight: 10, paddingVertical: 7,
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-  },
-  chipGpsText: { color: '#fff' },
   chipContent:   { flexDirection: 'row', alignItems: 'center', gap: 5, paddingLeft: 10, paddingVertical: 7, paddingRight: 4 },
   chipText:      { fontSize: 12, color: BRAND, fontWeight: '500' },
   chipRemoveBtn: { paddingVertical: 7, paddingLeft: 2, paddingRight: 8 },
 
-  // Autocomplete suggestions
+  // Autocomplete
   suggList: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, overflow: 'hidden', marginTop: 4 },
   suggRow:  { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 12, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
   suggText: { flex: 1, fontSize: 13, color: '#0F172A', lineHeight: 18 },
 
-  confirmBtn:     { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, height: 50, backgroundColor: BRAND, borderRadius: 14 },
+  confirmBtn:     { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, height: 50, backgroundColor: BRAND, borderRadius: 14, marginTop: 8 },
   confirmBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 
-  cancelBtn:     { height: 50, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#E53E3E', borderRadius: 14 },
+  backBtnWide:     { height: 42, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 14, marginTop: 6 },
+  backBtnWideText: { color: '#64748B', fontSize: 14, fontWeight: '600' },
+
+  cancelBtn:     { height: 50, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#E53E3E', borderRadius: 14, marginTop: 8 },
   cancelBtnText: { color: '#E53E3E', fontSize: 15, fontWeight: '700' },
 
   sectionLabel: { fontSize: 11, fontWeight: '600', color: '#64748B', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.6 },
@@ -1049,16 +1114,13 @@ const sub = StyleSheet.create({
   transportLabelActive: { color: '#fff' },
 
   // Vehicle carousel cards
-  vehicleCard:          {
-    borderWidth: 1.5, borderColor: BRAND, borderRadius: 12, padding: 12,
-    backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
-    minHeight: 88,
-  },
+  vehicleCard:          { borderWidth: 1.5, borderColor: BRAND, borderRadius: 12, padding: 12, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', minHeight: 88 },
   vehicleCardActive:    { backgroundColor: BRAND },
   vehicleCardLabel:     { fontSize: 13, fontWeight: '700', color: BRAND, marginTop: 6, textAlign: 'center' },
   vehicleCardLabelActive: { color: '#fff' },
   vehicleCardSpec:      { fontSize: 11, color: '#64748B', textAlign: 'center', marginTop: 2 },
   vehicleCardSpecActive:  { color: 'rgba(255,255,255,0.75)' },
+  vehicleScrollHint:    { fontSize: 13, color: '#94A3B8', textAlign: 'center', marginTop: 6, marginBottom: 2 },
 
   // Route summary (step 3)
   routeSummary:    { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, marginBottom: 12 },
@@ -1068,12 +1130,13 @@ const sub = StyleSheet.create({
   routeText:       { fontSize: 13, color: '#0F172A', fontWeight: '500', paddingTop: 2 },
   routeLine:       { width: 2, height: 8, backgroundColor: '#CBD5E1', marginLeft: 7, marginVertical: 2 },
 
-  // Vehicle carousel scroll hint
-  vehicleScrollHint: { fontSize: 13, color: '#94A3B8', textAlign: 'center', marginTop: 6, marginBottom: 2 },
-
   noteWrap:  { borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 12, backgroundColor: '#F8FAFC', marginBottom: 4 },
   noteInput: { fontSize: 14, color: '#0F172A', paddingVertical: 10, textAlignVertical: 'top' },
 
-  backTextBtn:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10 },
-  backTextBtnLabel: { fontSize: 13, color: '#64748B' },
+  // Quotes panel
+  quotesHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, marginTop: 4 },
+  quotesTitle:     { fontSize: 16, fontWeight: '700', color: '#0F172A' },
+  quotesCountdown: { fontSize: 13, color: '#64748B', fontWeight: '600' },
+  quotesCenter:    { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
+  quotesHint:      { fontSize: 14, color: '#64748B', textAlign: 'center', marginTop: 10 },
 })

@@ -6,21 +6,57 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { useLocalSearchParams, router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { Ionicons } from '@expo/vector-icons'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { rtdb } from '../../src/services/firebase'
 import type { RatingValue } from '../../src/types'
 
 const BRAND      = '#1A2E5E'
 const STAR_HINTS = ['Rất tệ', 'Chưa hài lòng', 'Bình thường', 'Tốt lắm!', 'Tuyệt vời!']
 const STAR_VALUES: RatingValue[] = [1, 2, 3, 4, 5]
+const HISTORY_KEY = 'customer_trip_history'
 
 export default function RatingScreen() {
-  const { t }      = useTranslation()
-  const { tripId } = useLocalSearchParams<{ tripId: string }>()
+  const { t } = useTranslation()
+  const {
+    tripId, pickupAddress, destAddress, estimatedKm,
+    vehicleType, driverName, vehicleBrand, licensePlate,
+  } = useLocalSearchParams<{
+    tripId: string; pickupAddress?: string; destAddress?: string
+    estimatedKm?: string; vehicleType?: string
+    driverName?: string; vehicleBrand?: string; licensePlate?: string
+  }>()
   const [selected, setSelected] = useState<RatingValue | null>(null)
+
+  async function saveHistory(rating: number | null) {
+    const entry = {
+      tripId:        tripId ?? '',
+      pickupAddress: pickupAddress ?? '',
+      destAddress:   destAddress ?? '',
+      driverName:    driverName ?? '',
+      vehicleBrand:  vehicleBrand ?? '',
+      licensePlate:  licensePlate ?? '',
+      estimatedKm:   parseFloat(estimatedKm ?? '0'),
+      vehicleType:   vehicleType ?? '',
+      rating,
+      completedAt:   Date.now(),
+    }
+    try {
+      const raw  = await AsyncStorage.getItem(HISTORY_KEY)
+      const list = raw ? JSON.parse(raw) : []
+      list.unshift(entry)
+      await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 50)))
+    } catch {}
+  }
 
   async function handleSubmit() {
     if (!selected || !tripId) return
     await rtdb.set(`trips/${tripId}/rating`, selected).catch(() => {})
+    await saveHistory(selected)
+    router.replace('/(customer)/home')
+  }
+
+  async function handleSkip() {
+    await saveHistory(null)
     router.replace('/(customer)/home')
   }
 
@@ -66,7 +102,7 @@ export default function RatingScreen() {
 
         <TouchableOpacity
           style={styles.skipBtn}
-          onPress={() => router.replace('/(customer)/home')}
+          onPress={handleSkip}
         >
           <Text style={styles.skipText}>{t('common.skip')}</Text>
         </TouchableOpacity>
