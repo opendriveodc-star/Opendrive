@@ -130,7 +130,6 @@ export default function TripScreen() {
           if (intervalRef.current)   { clearInterval(intervalRef.current);   intervalRef.current   = null }
           if (proximityRef.current)  { clearInterval(proximityRef.current);  proximityRef.current  = null }
           if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
-          bridgeRef.current?.stop()
           dismissNavNotif()
           showAlert(t('cancel.customerCancelled'), undefined, [{
             text: 'OK',
@@ -194,7 +193,6 @@ export default function TripScreen() {
         text: t('trip.abandonTrip'), style: 'destructive',
         onPress: async () => {
           if (intervalRef.current) clearInterval(intervalRef.current)
-          bridgeRef.current?.stop()
 
           // Ghi nhận hủy chuyến → trừ phạt ODC 3× baseFee
           if (pendingTrip && driverInfo) {
@@ -233,8 +231,8 @@ export default function TripScreen() {
             }
           }
 
-          // Tài xế hủy tại điểm đón → phạt khách +2
-          if (nearPickup && pendingTrip) {
+          // Tài xế hủy sau khi đã đến điểm đón → phạt khách +2
+          if (pickedUpRef.current && pendingTrip) {
             incrementCustomerPenalty(pendingTrip.customerPhone, 2).catch(() => {})
           }
           // Báo hiệu cho khách biết tài xế đã hủy (khách sẽ xóa trip)
@@ -256,6 +254,7 @@ export default function TripScreen() {
     if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
     mapRef.current?.hideCustomerMarker()
+    rtdb.set(`trips/${pendingTrip.tripId}/driver_at_pickup`, true).catch(() => {})
     rtdb.set(`trips/${pendingTrip.tripId}/trip_status`, 'picked_up').catch(() => {})
 
     // Bắt đầu check khoảng cách đến điểm đến

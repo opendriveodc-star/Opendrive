@@ -6,7 +6,7 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-23 (session 27 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-24 (session 29 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
@@ -48,12 +48,12 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **Pickup proximity lock** (`trip.tsx`): nút "Đã đến điểm đón" bị khóa cho đến khi tài xế cách điểm đón ≤100m. Kiểm tra mỗi 5s. Hiện khoảng cách còn lại khi chưa đến.
   - **Dropoff proximity lock** (`trip.tsx`): tương tự, nút "Hoàn thành chuyến" khóa cho đến khi cách điểm đến ≤100m.
   - **Customer penalty system** (`blacklist_customers/{phone}` dùng phone làm doc ID):
-    - Khách hủy khi tài xế đi được >50% quảng đường → +1 `cancelCount`
-    - Khách hủy khi tài xế đã đến điểm đón (≤300m) → +2
-    - Tài xế hủy tại điểm đón (khách không lên) → +2 vào `cancelCount` của khách
-    - `cancelCount >= 3` → lock 48h (in-session: hiện countdown, không kick; re-auth sau xóa data: check Firestore blacklist trước khi vào)
+    - Khách hủy bất kỳ lúc nào → +1 `cancelCount`
+    - Khách hủy khi tài xế đã bấm "Đã đến điểm đón" (`driver_at_pickup=true`) → +2
+    - Tài xế hủy sau khi đã bấm "Đã đến điểm đón" → +2 vào `cancelCount` của khách
+    - `cancelCount >= 3` → lock 72h (in-session: hiện countdown, không kick; re-auth sau xóa data: check Firestore blacklist trước khi vào)
     - Khi lock hết hạn: xóa khỏi Firestore blacklist, reset SecureStore
-  - **Worker 9** (`workers/cleanup-blacklist`): cron `0 20 * * *` (3am UTC+7), dọn `blacklist_customers` docs có `updatedAt > 48h` và `lockedUntil` đã qua. Cần `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` trong thư mục worker này.
+  - **Worker 9** (`workers/cleanup-blacklist`): cron `0 20 * * *` (3am UTC+7), dọn `blacklist_customers` docs có `updatedAt > 72h` và `lockedUntil` đã qua. Cần `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` trong thư mục worker này.
   - **Firestore rules** cập nhật: `blacklist_customers/{phone}` — client chỉ được tăng `cancelCount` (max +2 mỗi lần), tài xế có thể đọc, Worker Admin SDK xóa
   - **`src/types/index.ts`**: `DriverDoc.pendingTrip?: boolean`, `TripRealtimeInfo.cancelled?: 'customer'|'driver'`, `BlacklistCustomerDoc` dùng `phone` thay `uid`
   - **`src/services/firestore.ts`**: `setDriverPendingTrip()`, `getCustomerPenalty()`, `incrementCustomerPenalty()`, `setCustomerLockedUntil()`
@@ -112,13 +112,47 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
     - Tiêu đề context-aware: "📍 Đang đến điểm đón" / "📍 Đang đến điểm đến"
     - Tự dismiss ở 5 điểm: đến điểm đón (100m), đến điểm đến (100m), hoàn thành chuyến, tài xế hủy, khách hủy
 
-### Bàn giao Session 28 – Bắt đầu từ đây
+- **Session 28:** QR codes, vehicle icons, car6 rename, build fixes ✅
+  - **Map pin thu nhỏ** (`src/components/MapView.tsx`): SVG picker pin `width/height: 30×38` → `22×28` (viewBox giữ nguyên); shadow thu nhỏ tương ứng
+  - **Fix referral code corruption** (`app/(auth)/register.tsx`): input mã giới thiệu đổi `autoCapitalize="characters"` → `"none"` — Firebase UID là lowercase, auto-uppercase ghi sai `referredBy` vào Firestore khiến Worker stellar-record không tìm được referrer
+  - **QR code trong trang giới thiệu** (`app/(driver)/referral.tsx`): WebView hiện SVG QR sinh bởi `qrcode.toString(uid, { type: 'svg' })` — pure JS, Hermes-safe
+  - **QR scanner trong đăng ký** (`app/(auth)/register.tsx`): lazy require `expo-camera`, Modal với `CameraView`, detect barcode → điền mã giới thiệu tự động
+  - **Wallet QR screen mới** (`app/(driver)/wallet-qr.tsx`): hiện QR địa chỉ ví Stellar, Canvas trong WebView convert SVG→PNG base64, lưu ảnh về máy qua `expo-file-system` + `expo-media-library`; truy cập từ nút "QR" bên cạnh nút copy trong `wallet.tsx`
+  - **Vehicle passenger icons**: thêm `passengers?: number` vào `VehicleOption` (vehicles.ts); nếu có → render icon `<Ionicons name="person" size={10} />` × N thay chữ; áp dụng `register.tsx`, `driver-info.tsx`, `home.tsx` (customer VehiclePanel)
+    - motorbike: 1 người, car4: 4 người (tăng từ 3), car6: 6 người
+  - **car7 → car6 đổi tên hoàn toàn**: `src/types/index.ts` (VehicleType), `src/data/vehicles.ts` (key + labelKey + specKey), `src/i18n/vi.json` + `en.json` (4 keys), `firestore.rules` (regex vehicleType), `database.rules.json` (regex vehicleType) → redeploy Firebase rules
+  - **"Loại hình vận chuyển"**: i18n `register.transportModel` + `trip.transportModel` đổi từ "Mô hình vận tải"/"Transport model" → "Loại hình vận chuyển"/"Transport type" (không ảnh hưởng query Worker vì query dùng `transportModel` field, không phải label)
+  - **Packages mới**: `expo-camera ~16.1.4`, `expo-media-library ~17.1.6`, `expo-file-system ~18.1.10`, `qrcode ^1.5.4` — cần prebuild lại sau khi install
+  - **Gradle 8.14**: `android/gradle/wrapper/gradle-wrapper.properties` cập nhật để hỗ trợ Java 25 (OpenJDK Temurin 25.0.3). Gradle 8.8 lỗi "class file major version 69", Gradle 8.13 lỗi "Error resolving plugin [id: 'com.facebook.react.settings'] > 25.0.3"
 
-**Tình trạng:** Driver + Customer flow hoàn chỉnh và ổn định.
+- **Session 29:** Customer penalty refactor + RTDB poll optimization ✅
+  - **`app/(customer)/tracking.tsx`** — penalty logic mới:
+    - Bất kỳ lần hủy nào → +1 (bỏ điều kiện 50% quãng đường)
+    - Tài xế đã bấm "Đã đến điểm đón" (`driverArrivedRef.current = true`) → +2
+    - Lock duration: `LOCK_48H` → `LOCK_72H` (72h = 3 ngày)
+    - Fix bug: `clearRtdbPolls()` → `clearAllPolls()`, xóa `bridgeRef.current?.stop()` không tồn tại
+  - **`app/(customer)/tracking.tsx`** — notification tài xế đến điểm đón:
+    - `arrivedPollRef`: poll `trips/{id}/driver_at_pickup` mỗi 3s
+    - Khi `true` → local notification "🚗 Tài xế đã đến điểm đón / Hãy ra xe ngay nhé!"
+    - `dismissArrivedNotif()` gọi khi trip kết thúc hoặc bị hủy
+  - **`app/(customer)/tracking.tsx`** — RTDB poll optimization:
+    - Khi detect `picked_up`: stop `locationPollRef` + `statusPollRef` + `cancelPollRef` + `arrivedPollRef` luôn
+    - Sau pickup: **0 RTDB request** trong suốt hành trình, chỉ còn proximity trigger GPS nội bộ
+    - Nút "Hủy chuyến" hiện cả khi `tripStatus === 'picked_up'` — khách tự hủy nếu cần, không cần poll
+  - **`app/(driver)/trip.tsx`**:
+    - `handlePickedUp()`: ghi `driver_at_pickup = true` lên RTDB trước khi ghi `trip_status`
+    - `handleAbandon()`: điều kiện phạt khách đổi từ `nearPickup` (GPS) → `pickedUpRef.current` (đã bấm nút)
+    - Fix bug: xóa `bridgeRef.current?.stop()` không tồn tại
+  - **`workers/cleanup-blacklist`**: cutoff 48h → 72h, **redeploy thành công** ✅
+
+### Bàn giao Session 30 – Bắt đầu từ đây
+
+**Tình trạng:** Driver + Customer flow hoàn chỉnh và ổn định. QR codes + vehicle icons hoàn chỉnh. Build APK debug chưa hoàn thành (đang retry Gradle 8.14).
 
 ### Việc cần làm tiếp theo
 
 **Bước 7 – Polish & Monetization**
+- [ ] Build APK debug thành công trên device thật (Samsung)
 - [ ] AdMob interstitial sau khi kết thúc chuyến
 - [ ] Build APK production (EAS reset 01/06/2026)
 - [ ] iOS build (chờ Apple Developer account)
@@ -190,6 +224,7 @@ db.collection("drivers")
   location: { lat, lng, timestamp }          // tài xế ghi mỗi 3s khi đến đón
   trip_status: 'picked_up' | 'completed'     // tài xế ghi
   trip_info: { driverName, driverPhone, vehicleBrand, licensePlate }  // tài xế ghi 1 lần
+  driver_at_pickup: true                     // tài xế ghi khi bấm "Đã đến điểm đón"
   rating: 1-5                                // khách ghi sau khi trip_status=completed
 /drivers_online/{uid}/lastSeen
 ```
@@ -372,7 +407,14 @@ db.collection("drivers")
 ### Xe & Firestore Rules
 - Mỗi khi thêm xe mới: cập nhật `vehicles.ts` + regex `vehicleType` trong `firestore.rules` + **redeploy**
 - `transportModel`: `'passenger'|'freight'` – tài xế cũ fallback về `'passenger'`
-- Mã giới thiệu = `uid.slice(0,8).toUpperCase()`
+- Mã giới thiệu = **full Firebase UID** (lowercase, case-sensitive) — KHÔNG slice, KHÔNG uppercase; input `autoCapitalize="none"`
+
+### QR Code (React Native / Hermes)
+- **SVG generation:** `qrcode.toString(text, { type: 'svg' })` — pure JS, không dùng Canvas/browser API → hoạt động trong Hermes runtime
+- **Display:** inject SVG string vào WebView HTML (`source={{ html: ... }}`)
+- **SVG→PNG export:** Canvas trong WebView JS (`ctx.drawImage(img, ...)` + `toDataURL('image/png')`) → `postMessage` base64 về RN
+- **Lưu ảnh:** `expo-file-system` ghi file tạm → `expo-media-library` save vào gallery
+- **QR Scanner:** lazy require `expo-camera` (tránh crash khi quyền bị từ chối); Modal với `CameraView barcodeScannerSettings={{ barcodeTypes: ['qr'] }}`, `onBarcodeScanned` callback
 
 ### Avatar tài xế
 - Upload: `uploadDriverAvatar(uid, imageUri)` trong `src/services/firebase.ts` → Firebase Storage `avatars/{uid}.jpg`

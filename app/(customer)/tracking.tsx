@@ -10,15 +10,16 @@ import { Ionicons } from '@expo/vector-icons'
 import MapView, { type MapViewHandle } from '../../src/components/MapView'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as SecureStore from 'expo-secure-store'
+import * as Notifications from 'expo-notifications'
 import { TRIP } from '../../src/constants'
 import { rtdb } from '../../src/services/firebase'
-import { distanceKm, getCurrentLocation } from '../../src/services/location'
+import { getCurrentLocation, distanceKm } from '../../src/services/location'
 import { incrementCustomerPenalty, setCustomerLockedUntil } from '../../src/services/firestore'
 import { SecureStoreKey } from '../../src/types'
 import type { CustomerInfo, TripRealtimeInfo } from '../../src/types'
 
 const RETRY_TRIP_KEY = 'retry_trip_data'
-const LOCK_48H = 48 * 60 * 60 * 1000
+const LOCK_72H = 72 * 60 * 60 * 1000
 
 const BRAND = '#1A2E5E'
 
@@ -40,20 +41,20 @@ export default function TrackingScreen() {
   const [driverInfo, setDriverInfo] = useState<{ name: string; licensePlate: string; vehicleBrand: string } | null>(null)
   const [canCancel,  setCanCancel]  = useState(true)
 
-  const startedAtRef    = useRef<number>(Date.now())
-  const mapRef          = useRef<MapViewHandle>(null)
-  const completedRef    = useRef(false)
-  const pickupLatRef    = useRef<number | null>(null)
-  const pickupLngRef    = useRef<number | null>(null)
-  const initialDistRef  = useRef<number | null>(null)
-  const driverLatRef    = useRef<number>(10.7769)
-  const driverLngRef    = useRef<number>(106.7009)
-  const tripInfoRef     = useRef<TripRealtimeInfo | null>(null)
-  const driverInfoRef   = useRef<{ name: string; licensePlate: string; vehicleBrand: string } | null>(null)
-  const locationPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const statusPollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
-  const infoPollRef     = useRef<ReturnType<typeof setInterval> | null>(null)
-  const cancelPollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
+  const startedAtRef       = useRef<number>(Date.now())
+  const mapRef             = useRef<MapViewHandle>(null)
+  const completedRef       = useRef(false)
+  const pickupLatRef       = useRef<number | null>(null)
+  const pickupLngRef       = useRef<number | null>(null)
+  const tripInfoRef        = useRef<TripRealtimeInfo | null>(null)
+  const driverInfoRef      = useRef<{ name: string; licensePlate: string; vehicleBrand: string } | null>(null)
+  const driverArrivedRef   = useRef(false)
+  const arrivedNotifIdRef  = useRef<string | null>(null)
+  const locationPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
+  const statusPollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const infoPollRef        = useRef<ReturnType<typeof setInterval> | null>(null)
+  const cancelPollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const arrivedPollRef     = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Load trip info để lấy tọa độ điểm đón
   useEffect(() => {
@@ -87,13 +88,8 @@ export default function TrackingScreen() {
         if (loc?.lat != null) {
           setDriverLat(loc.lat)
           setDriverLng(loc.lng)
-          driverLatRef.current = loc.lat
-          driverLngRef.current = loc.lng
           mapRef.current?.updateDriverMarker(loc.lat, loc.lng)
           mapRef.current?.panTo(loc.lat, loc.lng)
-          if (initialDistRef.current === null && pickupLatRef.current && pickupLngRef.current) {
-            initialDistRef.current = distanceKm(loc.lat, loc.lng, pickupLatRef.current, pickupLngRef.current)
-          }
         }
       } catch {}
     }, 3000)
@@ -101,8 +97,15 @@ export default function TrackingScreen() {
     statusPollRef.current = setInterval(async () => {
       try {
         const status = await rtdb.get<string>(`trips/${tripId}/trip_status`)
-        if (status === 'picked_up') setTripStatus('picked_up')
-        if (status === 'completed' && !completedRef.current) navigateToRating()
+        if (status === 'picked_up') {
+          setTripStatus('picked_up')
+          driverArrivedRef.current = true  // đảm bảo set dù arrivedPollRef chưa kịp fire
+          // Dừng tất cả poll — khách tự bấm hủy nếu cần, proximity trigger lo rating
+          if (locationPollRef.current) { clearInterval(locationPollRef.current); locationPollRef.current = null }
+          if (statusPollRef.current)   { clearInterval(statusPollRef.current);   statusPollRef.current   = null }
+          if (cancelPollRef.current)   { clearInterval(cancelPollRef.current);   cancelPollRef.current   = null }
+          if (arrivedPollRef.current)  { clearInterval(arrivedPollRef.current);  arrivedPollRef.current  = null }
+        }
       } catch {}
     }, 3000)
 
@@ -113,6 +116,7 @@ export default function TrackingScreen() {
         if (cancelled === 'driver') {
           completedRef.current = true
           clearAllPolls()
+          dismissArrivedNotif()
           showAlert(t('cancel.driverCancelled'), undefined, [{
             text: 'OK',
             onPress: async () => {
@@ -152,20 +156,49 @@ export default function TrackingScreen() {
     tryGetTripInfo()
     infoPollRef.current = setInterval(tryGetTripInfo, 5000)
 
+    // Poll phát hiện tài xế đã đến điểm đón
+    arrivedPollRef.current = setInterval(async () => {
+      if (driverArrivedRef.current) return
+      try {
+        const arrived = await rtdb.get<boolean>(`trips/${tripId}/driver_at_pickup`)
+        if (arrived === true) {
+          driverArrivedRef.current = true
+          if (arrivedPollRef.current) { clearInterval(arrivedPollRef.current); arrivedPollRef.current = null }
+          Notifications.scheduleNotificationAsync({
+            content: {
+              title: '🚗 Tài xế đã đến điểm đón',
+              body: 'Hãy ra xe ngay nhé!',
+              data: {},
+            },
+            trigger: null,
+          }).then(id => { arrivedNotifIdRef.current = id }).catch(() => {})
+        }
+      } catch {}
+    }, 3000)
+
     return () => clearAllPolls()
   }, [tripId])
 
   function clearAllPolls() {
-    if (locationPollRef.current) { clearInterval(locationPollRef.current); locationPollRef.current = null }
-    if (statusPollRef.current)   { clearInterval(statusPollRef.current);   statusPollRef.current   = null }
-    if (infoPollRef.current)     { clearInterval(infoPollRef.current);     infoPollRef.current     = null }
-    if (cancelPollRef.current)   { clearInterval(cancelPollRef.current);   cancelPollRef.current   = null }
+    if (locationPollRef.current)  { clearInterval(locationPollRef.current);  locationPollRef.current  = null }
+    if (statusPollRef.current)    { clearInterval(statusPollRef.current);    statusPollRef.current    = null }
+    if (infoPollRef.current)      { clearInterval(infoPollRef.current);      infoPollRef.current      = null }
+    if (cancelPollRef.current)    { clearInterval(cancelPollRef.current);    cancelPollRef.current    = null }
+    if (arrivedPollRef.current)   { clearInterval(arrivedPollRef.current);   arrivedPollRef.current   = null }
+  }
+
+  function dismissArrivedNotif() {
+    if (arrivedNotifIdRef.current) {
+      Notifications.dismissNotificationAsync(arrivedNotifIdRef.current).catch(() => {})
+      arrivedNotifIdRef.current = null
+    }
   }
 
   function navigateToRating() {
     if (completedRef.current) return
     completedRef.current = true
     clearAllPolls()
+    dismissArrivedNotif()
     router.replace({
       pathname: '/(customer)/rating',
       params: {
@@ -209,8 +242,7 @@ export default function TrackingScreen() {
       {
         text: t('cancel.yes'), style: 'destructive',
         onPress: async () => {
-          clearRtdbPolls()
-          bridgeRef.current?.stop()
+          clearAllPolls()
           if (tripId) await rtdb.set(`trips/${tripId}/cancelled`, 'customer').catch(() => {})
 
           // Tính penalty
@@ -224,15 +256,10 @@ export default function TrackingScreen() {
   }
 
   function _calcCancelPenalty(): number {
-    if (tripStatus === 'picked_up') return 0  // đã lên xe, không thể hủy
-    if (!pickupLatRef.current || !pickupLngRef.current) return 0
-    // Tài xế đã ở điểm đón (trong vòng 300m) → phạt 2
-    const currentDist = distanceKm(driverLatRef.current, driverLngRef.current, pickupLatRef.current, pickupLngRef.current)
-    if (currentDist <= 0.3) return 2
-    // Tài xế đã đi >50% quãng đường đến đón → phạt 1
-    const init = initialDistRef.current
-    if (init && init > 0 && (init - currentDist) / init > 0.5) return 1
-    return 0
+    // Tài xế đã bấm "đã đến điểm đón" → phạt 2
+    if (driverArrivedRef.current) return 2
+    // Mọi trường hợp hủy còn lại → phạt 1
+    return 1
   }
 
   async function _applyCustomerPenalty(amount: number) {
@@ -244,7 +271,7 @@ export default function TrackingScreen() {
       const updated = { ...info, cancelCount: newCount }
       await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_INFO, JSON.stringify(updated))
       if (newCount >= 3) {
-        const lockUntil = Date.now() + LOCK_48H
+        const lockUntil = Date.now() + LOCK_72H
         await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL, String(lockUntil))
         setCustomerLockedUntil(info.phone, lockUntil).catch(() => {})
         showAlert(
@@ -297,7 +324,7 @@ export default function TrackingScreen() {
           <Text style={[styles.statusText, { color: statusCfg.color }]}>{t(statusCfg.label)}</Text>
         </View>
 
-        {canCancel && tripStatus === 'going_to_pickup' && (
+        {(tripStatus === 'picked_up' || (canCancel && tripStatus === 'going_to_pickup')) && (
           <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel} activeOpacity={0.75}>
             <Ionicons name="close-circle-outline" size={18} color="#DC2626" />
             <Text style={styles.cancelText}>{t('cancel.title')}</Text>

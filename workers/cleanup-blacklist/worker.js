@@ -1,5 +1,5 @@
 // Worker 9: Cron 3am UTC+7 (0 20 * * * UTC)
-// Dọn dẹp blacklist_customers đã hết hạn (updatedAt > 48h + lockedUntil đã qua)
+// Dọn dẹp blacklist_customers đã hết hạn (updatedAt > 72h + lockedUntil đã qua)
 
 export default {
   async scheduled(_event, env, _ctx) {
@@ -19,7 +19,7 @@ async function cleanupBlacklist(env) {
   const projectId = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT).project_id
   const baseUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/blacklist_customers`
   const now = Date.now()
-  const cutoff48h = now - 48 * 60 * 60 * 1000
+  const cutoff72h = now - 72 * 60 * 60 * 1000
 
   let deleted = 0
   let pageToken = null
@@ -38,7 +38,7 @@ async function cleanupBlacklist(env) {
       const lockedUntil = getInt(doc, 'lockedUntil')
 
       const lockExpired = !lockedUntil || lockedUntil < now
-      const stale = updatedAt > 0 && updatedAt < cutoff48h
+      const stale = updatedAt > 0 && updatedAt < cutoff72h
 
       if (stale && lockExpired) {
         const delRes = await fetch(doc.name, {
