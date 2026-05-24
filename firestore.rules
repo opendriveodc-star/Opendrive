@@ -45,7 +45,7 @@ service cloud.firestore {
         && request.resource.data.status        == 'offline'
         && request.resource.data.firstTripDone == false
         && request.resource.data.referralCount == 0
-        && request.resource.data.vehicleType.matches('^(motorbike|car4|car7|pickup|truck)$')
+        && request.resource.data.vehicleType.matches('^(motorbike|car4|car6|pickup|truck)$')
         && request.resource.data.transportModel.matches('^(passenger|freight)$');
 
       // Sửa: chỉ chủ tài khoản, không được thay đổi các field được bảo vệ
@@ -53,7 +53,7 @@ service cloud.firestore {
       allow update: if isOwner(uid)
         && protectedFieldsUnchanged()
         && request.resource.data.status.matches('^(ready|busy|offline)$')
-        && request.resource.data.vehicleType.matches('^(motorbike|car4|car7|pickup|truck)$')
+        && request.resource.data.vehicleType.matches('^(motorbike|car4|car6|pickup|truck)$')
         && (!request.resource.data.keys().hasAll(['transportModel'])
             || request.resource.data.transportModel.matches('^(passenger|freight)$'));
 

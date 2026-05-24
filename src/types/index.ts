@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type DriverStatus = 'ready' | 'busy' | 'offline'
-export type VehicleType    = 'motorbike' | 'car4' | 'car7' | 'pickup' | 'truck'
+export type VehicleType    = 'motorbike' | 'car4' | 'car6' | 'pickup' | 'truck'
 export type TransportModel = 'passenger' | 'freight'
 export type TripStatus   = 'waiting' | 'matched' | 'ongoing' | 'done' | 'cancelled'
 export type RatingValue  = 1 | 2 | 3 | 4 | 5

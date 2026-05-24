@@ -184,6 +184,11 @@ export default function WalletScreen() {
     showAlert(t('common.success'), t('settings.copied'))
   }
 
+  function openQR() {
+    if (!driverInfo?.stellarWallet) return
+    router.push({ pathname: '/(driver)/wallet-qr', params: { address: driverInfo.stellarWallet, name: driverInfo.name } })
+  }
+
   function openExplorer() {
     if (!driverInfo?.stellarWallet) return
     const base = STELLAR.NETWORK === 'testnet'
@@ -242,6 +247,10 @@ export default function WalletScreen() {
             <TouchableOpacity style={styles.copyBtn} onPress={copyAddress}>
               <Ionicons name="copy-outline" size={16} color={BRAND} />
               <Text style={styles.copyBtnText}>{t('settings.copyCode')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.qrBtn} onPress={openQR}>
+              <Ionicons name="qr-code-outline" size={16} color={BRAND} />
+              <Text style={styles.qrBtnText}>QR</Text>
             </TouchableOpacity>
           </View>
           <TouchableOpacity style={styles.explorerBtn} onPress={openExplorer}>
@@ -419,6 +428,8 @@ const styles = StyleSheet.create({
   addressText: { flex: 1, fontSize: 13, color: '#475569', fontFamily: 'monospace', backgroundColor: '#F8FAFC', padding: 8, borderRadius: 8 },
   copyBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: BRAND_LIGHT, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8 },
   copyBtnText: { fontSize: 13, fontWeight: '600', color: BRAND },
+  qrBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: BRAND_LIGHT, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8 },
+  qrBtnText:   { fontSize: 13, fontWeight: '600', color: BRAND },
   explorerBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9' },
   explorerBtnText: { fontSize: 13, color: '#2563EB', fontWeight: '600' },
 

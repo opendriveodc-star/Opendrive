@@ -1,0 +1,16 @@
+name = "opendrive-sos-alert"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+STELLAR_NETWORK = "testnet"
+STELLAR_SOS_ADDRESS = "GBXS3WEDTC6ZJONLNA7OYMZ34OXC43PPCDMEVRR2MKBMOOJREDRUEHFW"
+STELLAR_ISSUER_ADDRESS = "GCOZIP3AJIBLNK3MCTV7RNRLLOBOM44SAVAND5VBMSSPYIGNN5FL7AZJ"
+STELLAR_DISTRIBUTOR_ADDRESS = "GAIA4JFAJK4U4IEEOW7XS6X25UHV4NQUQM5ONXZA2RCWXDCYDVUWWMUL"
+
+# Secrets (set via: wrangler secret put SECRET_NAME)
+# STELLAR_SOS_PRIVATE_KEY         – private key của SOS wallet (dùng 1 lần để tạo trustline)
+# STELLAR_DISTRIBUTOR_PRIVATE_KEY – ký payment từ Distributor → SOS wallet
+# STELLAR_FEEBUMP_PRIVATE_KEY     – fee bump cho tất cả tx
+# FIREBASE_SERVICE_ACCOUNT        – xác thực JWT

@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, Image, StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
+  StyleSheet, Image, StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, Dimensions,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { showAlert, showActionSheet } from '../../src/components/GlobalAlert'
@@ -19,15 +19,19 @@ import { SecureStoreKey, VehicleType, DriverInfo } from '../../src/types'
 import { APP } from '../../src/constants'
 import { TRANSPORT_MODELS, TransportModel, VehicleKey } from '../../src/data/vehicles'
 
-// Lazy – requires dev client rebuild with expo-image-picker + expo-image-manipulator
+// Lazy – requires dev client rebuild with expo-image-picker + expo-image-manipulator + expo-camera
 let ImagePicker: typeof import('expo-image-picker') | null = null
 let ImageManipulator: typeof import('expo-image-manipulator') | null = null
+let ExpoCamera: typeof import('expo-camera') | null = null
 try { ImagePicker = require('expo-image-picker') } catch { ImagePicker = null }
 try { ImageManipulator = require('expo-image-manipulator') } catch { ImageManipulator = null }
+try { ExpoCamera = require('expo-camera') } catch { ExpoCamera = null }
 
 const BRAND       = '#1A2E5E'
 const BRAND_LIGHT = '#E8EDF6'
 const BRAND_MUTED = '#F0F4FB'
+const SCREEN_W        = Dimensions.get('window').width
+const VEHICLE_BTN_W   = Math.floor((SCREEN_W - 56 - 20) / 3)  // 56 = 2×28 padding, 20 = 2 gaps
 
 // ── Header dùng chung (logo + slogan + divider) ──────────────────────────────
 function PageHeader({ t }: { t: (k: string) => string }) {
@@ -67,6 +71,7 @@ export default function RegisterScreen() {
   }
   const [licensePlate,    setLicensePlate]    = useState('')
   const [referralCode,    setReferralCode]    = useState('')
+  const [scanning,        setScanning]        = useState(false)
   const [termsChecked,    setTermsChecked]    = useState(false)
   const [loading,         setLoading]         = useState(false)
   const [avatarUri,       setAvatarUri]       = useState<string | null>(null)
@@ -115,6 +120,24 @@ export default function RegisterScreen() {
       }
       setAvatarUri(uri)
     }
+  }
+
+  async function openQrScanner() {
+    if (!ExpoCamera) {
+      showAlert(t('common.error'), 'Cần build lại app để dùng tính năng này')
+      return
+    }
+    const { status } = await ExpoCamera.Camera.requestCameraPermissionsAsync()
+    if (status !== 'granted') {
+      showAlert(t('common.error'), 'Cần cấp quyền truy cập camera')
+      return
+    }
+    setScanning(true)
+  }
+
+  function handleScan({ data }: { data: string }) {
+    setReferralCode(data.trim())
+    setScanning(false)
   }
 
   async function handleRegister() {
@@ -323,31 +346,40 @@ export default function RegisterScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          scrollEnabled={vehicleOptions.length > 3}
           style={s.vehicleScroll}
-          contentContainerStyle={s.vehicleScrollContent}
+          contentContainerStyle={vehicleOptions.length <= 3 ? { flex: 1, gap: 10, paddingVertical: 4 } : s.vehicleScrollContent}
         >
-          {vehicleOptions.map(({ key, icon, labelKey, specKey }) => {
+          {vehicleOptions.map(({ key, icon, labelKey, specKey, passengers }) => {
             const active = vehicleType === key
             return (
               <TouchableOpacity
                 key={key}
-                style={[s.vehicleBtn, active && s.vehicleBtnActive]}
+                style={[s.vehicleBtn, vehicleOptions.length <= 3 ? { flex: 1 } : { width: VEHICLE_BTN_W }, active && s.vehicleBtnActive]}
                 onPress={() => setVehicleType(key)}
                 activeOpacity={0.8}
               >
-                <Ionicons name={icon as any} size={28} color={active ? '#fff' : BRAND} />
+                <Ionicons name={icon as any} size={26} color={active ? '#fff' : BRAND} />
                 <Text style={[s.vehicleBtnText, active && s.vehicleBtnTextActive]}>
                   {t(labelKey)}
                 </Text>
-                <Text style={[s.vehicleBtnSpec, active && s.vehicleBtnSpecActive]}>
-                  {t(specKey)}
-                </Text>
+                {passengers != null ? (
+                  <View style={s.passengerRow}>
+                    <Text style={[s.passengerCount, active && s.passengerCountActive]}>{passengers}</Text>
+                    <Ionicons name="person" size={11} color={active ? 'rgba(255,255,255,0.85)' : '#64748B'} />
+                  </View>
+                ) : (
+                  <Text style={[s.vehicleBtnSpec, active && s.vehicleBtnSpecActive]}>
+                    {t(specKey)}
+                  </Text>
+                )}
               </TouchableOpacity>
             )
           })}
         </ScrollView>
-
-        <Text style={s.scrollHint}>← Trượt qua lại để xem tiếp →</Text>
+        {vehicleOptions.length > 3 && (
+          <Text style={s.scrollHint}>← Trượt qua lại để xem tiếp →</Text>
+        )}
 
         <View style={s.inputWrap}>
           <Ionicons name="car-outline" size={18} color={BRAND} style={s.inputIcon} />
@@ -394,14 +426,38 @@ export default function RegisterScreen() {
         <View style={s.inputWrap}>
           <Ionicons name="gift-outline" size={18} color={BRAND} style={s.inputIcon} />
           <TextInput
-            style={[s.input, { textTransform: 'uppercase' }]}
+            style={s.input}
             placeholder={t('register.referralPlaceholder')}
             placeholderTextColor="#94A3B8"
             value={referralCode}
             onChangeText={setReferralCode}
-            autoCapitalize="characters"
+            autoCapitalize="none"
           />
+          <TouchableOpacity onPress={openQrScanner} style={s.scanBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="qr-code-outline" size={20} color={BRAND} />
+          </TouchableOpacity>
         </View>
+
+        {/* QR Scanner Modal */}
+        {scanning && ExpoCamera && (
+          <Modal visible animationType="slide" onRequestClose={() => setScanning(false)}>
+            <View style={s.scanModal}>
+              <ExpoCamera.CameraView
+                style={s.scanCamera}
+                facing="back"
+                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                onBarcodeScanned={handleScan}
+              />
+              <SafeAreaView style={s.scanOverlay} edges={['top']}>
+                <TouchableOpacity style={s.scanClose} onPress={() => setScanning(false)}>
+                  <Ionicons name="close" size={24} color="#fff" />
+                </TouchableOpacity>
+                <View style={s.scanFrame} />
+                <Text style={s.scanHint}>Đưa mã QR vào khung</Text>
+              </SafeAreaView>
+            </View>
+          </Modal>
+        )}
 
         {/* Điều khoản */}
         <TouchableOpacity style={s.checkRow} onPress={() => setTermsChecked(!termsChecked)} activeOpacity={0.8}>
@@ -570,6 +626,27 @@ const s = StyleSheet.create({
     fontSize: 15,
     color:    BRAND,
   },
+  scanBtn: {
+    paddingHorizontal: 14,
+  },
+  scanModal: { flex: 1, backgroundColor: '#000' },
+  scanCamera: { flex: 1 },
+  scanOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center',
+  },
+  scanClose: {
+    alignSelf: 'flex-start', margin: 16,
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  scanFrame: {
+    width: 220, height: 220,
+    borderWidth: 2, borderColor: '#fff', borderRadius: 16,
+    marginTop: 80,
+  },
+  scanHint: { color: '#fff', fontSize: 14, marginTop: 16, opacity: 0.85 },
 
   // ── Transport model toggle ──
   modelRow: {
@@ -617,9 +694,9 @@ const s = StyleSheet.create({
     alignItems:      'center',
     justifyContent:  'center',
     gap:             5,
-    minWidth:        110,
-    paddingHorizontal: 18,
-    paddingVertical:   16,
+    width:           VEHICLE_BTN_W,
+    paddingHorizontal: 8,
+    paddingVertical:   14,
     borderRadius:    16,
     borderWidth:     1.5,
     borderColor:     BRAND_LIGHT,
@@ -647,6 +724,21 @@ const s = StyleSheet.create({
   vehicleBtnSpecActive: {
     color:   '#FFFFFF',
     opacity: 0.8,
+  },
+  iconWrap: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  passengerRow: {
+    flexDirection: 'row',
+    gap: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  passengerCount: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  passengerCountActive: {
+    color: 'rgba(255,255,255,0.85)',
   },
 
   // ── Terms ──

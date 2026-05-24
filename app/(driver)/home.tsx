@@ -52,10 +52,8 @@ export default function DriverHomeScreen() {
   const isAnimatingRef = useRef(false)
   const navigatingRef  = useRef(false)
 
-  const spinAnim     = useRef(new Animated.Value(0)).current
-  const logoOpacity  = useRef(new Animated.Value(1)).current
-  const labelOpacity = useRef(new Animated.Value(0)).current
-  const spinRef      = useRef<Animated.CompositeAnimation | null>(null)
+  const spinAnim    = useRef(new Animated.Value(0)).current
+  const spinRef     = useRef<Animated.CompositeAnimation | null>(null)
   const isMountedRef = useRef(false)
 
   // Returning from online.tsx via router.back() – reset navigation state only, no spinner
@@ -73,8 +71,6 @@ export default function DriverHomeScreen() {
     navigatingRef.current = false
     setGoingOnline(false)
     setIsInitializing(true)
-    logoOpacity.setValue(1)
-    labelOpacity.setValue(0)
     spinAnim.setValue(0)
 
     startSpinner()
@@ -145,14 +141,9 @@ export default function DriverHomeScreen() {
       new Promise(r => setTimeout(r, 1400)),  // tối thiểu 1.4s để animation hiển thị
     ])
 
-    Animated.parallel([
-      Animated.timing(logoOpacity,  { toValue: 0, duration: 380, useNativeDriver: true }),
-      Animated.timing(labelOpacity, { toValue: 1, duration: 380, useNativeDriver: true }),
-    ]).start(() => {
-      spinRef.current?.stop()
-      spinRef.current = null
-      setIsInitializing(false)
-    })
+    spinRef.current?.stop()
+    spinRef.current = null
+    setIsInitializing(false)
   }
 
   async function warmupLocation() {
@@ -318,11 +309,18 @@ export default function DriverHomeScreen() {
 
       <View style={{ flex: 1 }} />
 
-      <Text style={styles.slogan}>{t('roleSelect.slogan')}</Text>
+      <View style={{ marginTop: -48, alignItems: 'center' }}>
+        <Image
+          source={require('../../assets/logo_od.png')}
+          style={styles.sloganLogo}
+          resizeMode="contain"
+        />
+        <Text style={styles.slogan}>{t('roleSelect.slogan')}</Text>
+      </View>
       <Text style={styles.greeting}>
-        Xin chào {driverInfo?.name?.split(' ').pop() ?? 'bạn'}!
+        {t('driver.greeting', { name: driverInfo?.name?.split(' ').pop() ?? 'bạn' })}
       </Text>
-      <Text style={styles.subGreeting}>Bạn đã sẵn sàng để nhận chuyến chưa?</Text>
+      <Text style={styles.subGreeting}>{t('driver.readyQuestion')}</Text>
 
       <View style={{ height: 20 }} />
 
@@ -338,14 +336,9 @@ export default function DriverHomeScreen() {
           activeOpacity={0.82}
           disabled={isInitializing || goingOnline}
         >
-          <Animated.Image
-            source={require('../../assets/logo_od.png')}
-            style={[styles.btnLogo, { opacity: logoOpacity }]}
-            resizeMode="contain"
-          />
-          <Animated.Text style={[styles.readyLabel, { opacity: labelOpacity }]}>
+          <Text style={styles.readyLabel}>
             {t('driver.readyOff')}
-          </Animated.Text>
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -457,12 +450,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
+  sloganLogo: {
+    width:        144,
+    height:       144,
+    marginBottom: -22,
+  },
   slogan: {
     fontSize: 13,
     color: '#94A3B8',
     fontStyle: 'italic',
     letterSpacing: 0.3,
-    marginBottom: 16,
+    marginBottom: 10,
   },
   greeting: {
     fontSize: 22,
@@ -518,13 +516,7 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 8,
   },
-  btnLogo: {
-    position: 'absolute',
-    width: 88,
-    height: 88,
-  },
   readyLabel: {
-    position: 'absolute',
     fontSize: 16,
     fontWeight: '800',
     color: BRAND,

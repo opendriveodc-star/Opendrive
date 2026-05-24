@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#1A56DB"
+      "backgroundColor": "#FFFFFF"
     },
     "scheme": "opendrive",
     "plugins": [
@@ -29,7 +29,7 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#1A56DB",
+          "color": "#FFFFFF",
           "sounds": []
         }
       ]
@@ -37,7 +37,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#1A56DB"
+        "backgroundColor": "#FFFFFF"
       },
       "package": "com.opendrive.app",
       "permissions": [

@@ -7,6 +7,7 @@ export const STELLAR = {
   ISSUER_ADDRESS:     process.env.EXPO_PUBLIC_STELLAR_ISSUER_ADDRESS ?? '',
   DISTRIBUTOR_ADDRESS: process.env.EXPO_PUBLIC_STELLAR_DISTRIBUTOR_ADDRESS ?? '',
   TRANSACTION_ADDRESS: process.env.EXPO_PUBLIC_STELLAR_TRANSACTION_ADDRESS ?? '',
+  SOS_ADDRESS:         process.env.EXPO_PUBLIC_STELLAR_SOS_ADDRESS ?? '',
 } as const
 
 export const FIREBASE = {
@@ -27,6 +28,8 @@ export const WORKER = {
   CLEANUP_TRIPS:     'https://opendrive-cleanup-trips.opendrive-odc.workers.dev',
   MINING_REPORT:     'https://opendrive-mining-report.opendrive-odc.workers.dev',
   EXCHANGE_POINTS:   'https://opendrive-exchange-points.opendrive-odc.workers.dev',
+  NOTIFY_CANCEL:     'https://opendrive-notify-cancel.opendrive-odc.workers.dev',
+  SOS_ALERT:         'https://opendrive-sos-alert.opendrive-odc.workers.dev',
 } as const
 
 export const APP = {

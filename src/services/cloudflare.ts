@@ -107,6 +107,37 @@ export async function miningReport(uid: string, rounds: number): Promise<MiningR
   return res.data
 }
 
+// Worker 10: Gửi FCM thông báo hủy chuyến
+export async function notifyCancel(
+  tripId:        string,
+  reason:        'driver' | 'customer',
+  targetFcmToken: string,
+  cancellerName?: string,
+): Promise<void> {
+  const body = { tripId, reason, targetFcmToken, ...(cancellerName ? { cancellerName } : {}) }
+  const res  = await workerFetch(WORKER.NOTIFY_CANCEL, {
+    method: 'POST',
+    body:   JSON.stringify(body),
+  })
+  if (!res.success) throw new Error(res.error ?? 'notify-cancel failed')
+}
+
+// Worker 10: Gửi cảnh báo SOS lên Stellar blockchain
+export async function sosAlert(payload: {
+  driverPhone:   string
+  customerPhone: string
+  lat:           number
+  lng:           number
+  triggeredBy:   'driver' | 'customer'
+  memo27bytes:   string
+}): Promise<void> {
+  const res = await workerFetch(WORKER.SOS_ALERT, {
+    method: 'POST',
+    body:   JSON.stringify(payload),
+  })
+  if (!res.success) throw new Error(res.error ?? 'sos-alert failed')
+}
+
 // Worker 8: Đổi điểm lấy ODC
 export async function exchangePoints(payload: ExchangePointsRequest): Promise<ExchangePointsResponse> {
   const res = await workerFetch<ExchangePointsResponse>(WORKER.EXCHANGE_POINTS, {

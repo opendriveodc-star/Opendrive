@@ -123,12 +123,12 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
     #pin-shadow {
       position: fixed; top: ${pinTopPct}%; left: 50%;
       transform: translate(-50%, 2px);
-      width: 12px; height: 5px;
+      width: 9px; height: 4px;
       background: rgba(0,0,0,0.18);
       border-radius: 50%; z-index: 99; pointer-events: none;
       transition: all 0.15s ease;
     }
-    #pin-shadow.moving { width: 7px; height: 3px; opacity: 0.4; }
+    #pin-shadow.moving { width: 5px; height: 2px; opacity: 0.4; }
     .driver-car-marker { width: 28px; height: 28px; cursor: pointer; }
     ` : `
     .driver-dot {
@@ -159,7 +159,7 @@ const MapView = forwardRef<MapViewHandle, MapViewProps>(
   <div id="map"></div>
   ${isPicker ? `
   <div id="picker-pin">
-    <svg width="30" height="38" viewBox="0 0 30 38" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width="22" height="28" viewBox="0 0 30 38" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M15 0C6.716 0 0 6.716 0 15c0 9.375 13.5 22.313 14.1 22.875a1.25 1.25 0 001.8 0C16.5 37.313 30 24.375 30 15 30 6.716 23.284 0 15 0z" fill="#1A2E5E"/>
       <circle cx="15" cy="15" r="6.5" fill="white"/>
       <circle cx="15" cy="15" r="3.5" fill="#1A2E5E"/>

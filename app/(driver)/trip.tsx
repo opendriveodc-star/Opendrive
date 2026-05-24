@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, Linking,
-  ActivityIndicator, StatusBar,
+  ActivityIndicator, StatusBar, LayoutChangeEvent,
 } from 'react-native'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -15,9 +15,10 @@ import * as Notifications from 'expo-notifications'
 import MapView from '../../src/components/MapView'
 import type { MapViewHandle } from '../../src/components/MapView'
 import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip, saveDriverInfo, savePendingPenalty } from '../../src/utils/storage'
-import { recordTrip } from '../../src/services/cloudflare'
+import { recordTrip, notifyCancel, sosAlert } from '../../src/services/cloudflare'
 import { updateDriverStatus, setDriverPendingTrip, incrementCustomerPenalty } from '../../src/services/firestore'
-import { encodeMemo } from '../../src/services/odc'
+import { encodeMemo, encodeSosMemo } from '../../src/services/odc'
+import SosButton from '../../src/components/SosButton'
 import { rtdb } from '../../src/services/firebase'
 import { maskPhone } from '../../src/utils/format'
 import { distanceKm } from '../../src/services/location'
@@ -49,6 +50,8 @@ export default function TripScreen() {
   const [distToPickup,     setDistToPickup]     = useState<number | null>(null)
   const [nearDropoff,      setNearDropoff]      = useState(false)
   const [distToDropoff,    setDistToDropoff]    = useState<number | null>(null)
+  const [panelH,           setPanelH]           = useState(260)
+  const [sosSent,          setSosSent]          = useState(false)
 
   const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const ratingPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -59,10 +62,11 @@ export default function TripScreen() {
   const mapInitRef          = useRef<{ lat: number; lng: number } | null>(null)
   const proximityRef        = useRef<ReturnType<typeof setInterval> | null>(null)
   const pickupProximityRef  = useRef<ReturnType<typeof setInterval> | null>(null)
-  const cancelPollRef       = useRef<ReturnType<typeof setInterval> | null>(null)
   const dropLatRef          = useRef<number | null>(null)
   const dropLngRef          = useRef<number | null>(null)
   const navNotifIdRef       = useRef<string | null>(null)
+  const customerFcmTokenRef = useRef<string>('')
+  const cancelledHandledRef = useRef(false)
 
   useEffect(() => {
     async function load() {
@@ -82,11 +86,12 @@ export default function TripScreen() {
       if (trip) {
         try {
           const info = await rtdb.get<TripRealtimeInfo>(`trips/${trip.tripId}/info`)
-          if (info?.pickupAddress) setPickupAddress(info.pickupAddress)
-          if (info?.destAddress)   setDestAddress(info.destAddress)
-          if (info?.note)          setTripNote(info.note)
-          if (info?.dropLat)       { setDropLat(info.dropLat);  dropLatRef.current = info.dropLat }
-          if (info?.dropLng)       { setDropLng(info.dropLng);  dropLngRef.current = info.dropLng }
+          if (info?.pickupAddress)    setPickupAddress(info.pickupAddress)
+          if (info?.destAddress)      setDestAddress(info.destAddress)
+          if (info?.note)             setTripNote(info.note)
+          if (info?.dropLat)          { setDropLat(info.dropLat);  dropLatRef.current = info.dropLat }
+          if (info?.dropLng)          { setDropLng(info.dropLng);  dropLngRef.current = info.dropLng }
+          if (info?.customerFcmToken) customerFcmTokenRef.current = info.customerFcmToken as string
         } catch {}
 
         // Kiểm tra khoảng cách đến điểm đón mỗi 5s
@@ -118,47 +123,47 @@ export default function TripScreen() {
     }
   }, [])
 
-  // Poll phát hiện khách hủy
+  function handleCustomerCancelledAlert() {
+    if (cancelledHandledRef.current) return
+    cancelledHandledRef.current = true
+    if (intervalRef.current)        { clearInterval(intervalRef.current);        intervalRef.current        = null }
+    if (proximityRef.current)       { clearInterval(proximityRef.current);       proximityRef.current       = null }
+    if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
+    dismissNavNotif()
+    showAlert(t('cancel.customerCancelled'), undefined, [{
+      text: 'OK',
+      onPress: async () => {
+        await clearPendingTrip()
+        if (driverInfoRef.current) {
+          setDriverPendingTrip(driverInfoRef.current.uid, false).catch(() => {})
+          updateDriverStatus(driverInfoRef.current.uid, 'ready').catch(() => {})
+        }
+        if (pendingTripRef.current) await rtdb.delete(`trips/${pendingTripRef.current.tripId}`).catch(() => {})
+        router.replace('/(driver)/online')
+      },
+    }])
+  }
+
+  // FCM foreground listener: tài xế nhận thông báo khách hủy ngay lập tức
   useEffect(() => {
     if (!pendingTrip) return
-    const tripId = pendingTrip.tripId
-    cancelPollRef.current = setInterval(async () => {
-      try {
-        const cancelled = await rtdb.get<string>(`trips/${tripId}/cancelled`)
-        if (cancelled === 'customer') {
-          if (cancelPollRef.current) { clearInterval(cancelPollRef.current); cancelPollRef.current = null }
-          if (intervalRef.current)   { clearInterval(intervalRef.current);   intervalRef.current   = null }
-          if (proximityRef.current)  { clearInterval(proximityRef.current);  proximityRef.current  = null }
-          if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
-          dismissNavNotif()
-          showAlert(t('cancel.customerCancelled'), undefined, [{
-            text: 'OK',
-            onPress: async () => {
-              await clearPendingTrip()
-              if (driverInfoRef.current) {
-                setDriverPendingTrip(driverInfoRef.current.uid, false).catch(() => {})
-                updateDriverStatus(driverInfoRef.current.uid, 'ready').catch(() => {})
-              }
-              await rtdb.delete(`trips/${tripId}`).catch(() => {})
-              router.replace('/(driver)/online')
-            },
-          }])
-        }
-      } catch {}
-    }, 3000)
-    return () => {
-      if (cancelPollRef.current) { clearInterval(cancelPollRef.current); cancelPollRef.current = null }
-    }
+    const sub = Notifications.addNotificationReceivedListener(notification => {
+      const data = notification.request.content.data as Record<string, string>
+      if (data?.type !== 'trip_cancelled' || data?.reason !== 'customer') return
+      handleCustomerCancelledAlert()
+    })
+    return () => sub.remove()
   }, [pendingTrip])
 
   // Ghi trip_info lên RTDB 1 lần
   useEffect(() => {
     if (!pendingTrip || !driverInfo) return
     rtdb.set(`trips/${pendingTrip.tripId}/trip_info`, {
-      driverName:   driverInfo.name,
-      driverPhone:  driverInfo.phone,
-      vehicleBrand: driverInfo.vehicleBrand,
-      licensePlate: driverInfo.licensePlate,
+      driverName:     driverInfo.name,
+      driverPhone:    driverInfo.phone,
+      vehicleBrand:   driverInfo.vehicleBrand,
+      licensePlate:   driverInfo.licensePlate,
+      driverFcmToken: driverInfo.fcmToken ?? '',
     }).catch(() => {})
   }, [pendingTrip, driverInfo])
 
@@ -185,6 +190,20 @@ export default function TripScreen() {
       if (pickupProximityRef.current) clearInterval(pickupProximityRef.current)
     }
   }, [pendingTrip])
+
+  async function handleSOS() {
+    if (sosSent || !driverInfoRef.current || !pendingTripRef.current) return
+    setSosSent(true)
+    try {
+      const loc  = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+      const lat  = loc.coords.latitude
+      const lng  = loc.coords.longitude
+      const drv  = driverInfoRef.current
+      const trip = pendingTripRef.current
+      const memo27bytes = encodeSosMemo(drv.phone, trip.customerPhone, lat, lng, 'driver')
+      sosAlert({ driverPhone: drv.phone, customerPhone: trip.customerPhone, lat, lng, triggeredBy: 'driver', memo27bytes }).catch(() => {})
+    } catch {}
+  }
 
   function handleAbandon() {
     showAlert(t('trip.abandonTrip'), t('trip.abandonConfirm'), [
@@ -235,8 +254,10 @@ export default function TripScreen() {
           if (pickedUpRef.current && pendingTrip) {
             incrementCustomerPenalty(pendingTrip.customerPhone, 2).catch(() => {})
           }
-          // Báo hiệu cho khách biết tài xế đã hủy (khách sẽ xóa trip)
-          if (pendingTrip) await rtdb.set(`trips/${pendingTrip.tripId}/cancelled`, 'driver').catch(() => {})
+          // Notify khách qua FCM
+          if (pendingTrip && customerFcmTokenRef.current && driverInfo) {
+            notifyCancel(pendingTrip.tripId, 'driver', customerFcmTokenRef.current, driverInfo.name).catch(() => {})
+          }
           await clearPendingTrip()
           if (driverInfo) setDriverPendingTrip(driverInfo.uid, false).catch(() => {})
           if (driverInfo) updateDriverStatus(driverInfo.uid, 'ready').catch(() => {})
@@ -441,8 +462,16 @@ export default function TripScreen() {
         </View>
       </SafeAreaView>
 
+      {/* SOS Button – floating bên phải, phía trên panel */}
+      <View style={[styles.sosWrapper, { bottom: panelH + 12 }]} pointerEvents="box-none">
+        <SosButton onTriggered={handleSOS} disabled={sosSent} />
+      </View>
+
       {/* Bottom panel */}
-      <View style={[styles.panel, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+      <View
+        style={[styles.panel, { paddingBottom: Math.max(insets.bottom, 16) }]}
+        onLayout={(e: LayoutChangeEvent) => setPanelH(e.nativeEvent.layout.height)}
+      >
         <View style={styles.handle} />
 
         {/* Price + SĐT khách (bấm để gọi) */}
@@ -560,6 +589,7 @@ export default function TripScreen() {
 
 const styles = StyleSheet.create({
   root:       { flex: 1, backgroundColor: '#E8EDF6' },
+  sosWrapper: { position: 'absolute', right: 16, zIndex: 30 },
   fullCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC', gap: 16 },
   waitText:   { fontSize: 15, color: '#64748B', fontWeight: '600', textAlign: 'center' },
 

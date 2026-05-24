@@ -12,6 +12,7 @@ web-build/
 .env
 .env.local
 google-service-account.json
+*firebase-adminsdk*.json
 GoogleService-Info.plist
 
 # Cloudflare Workers

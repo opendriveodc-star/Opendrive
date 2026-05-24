@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Image, ActivityIndicator,
+  StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Image, ActivityIndicator, Dimensions,
 } from 'react-native'
 import { showAlert, showActionSheet } from '../../src/components/GlobalAlert'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -25,6 +25,8 @@ import { SecureStoreKey, type DriverInfo, type VehicleType, type TransportModel 
 const BRAND       = '#1A2E5E'
 const BRAND_LIGHT = '#E8EDF6'
 const BRAND_MUTED = '#F0F4FB'
+const SCREEN_W        = Dimensions.get('window').width
+const VEHICLE_BTN_W   = Math.floor((SCREEN_W - 56 - 20) / 3)  // 56 = 2×28 padding, 20 = 2 gaps
 
 export default function DriverInfoScreen() {
   const { t } = useTranslation()
@@ -244,26 +246,36 @@ export default function DriverInfoScreen() {
 
         <ScrollView
           horizontal showsHorizontalScrollIndicator={false}
-          style={s.vehicleScroll} contentContainerStyle={s.vehicleScrollContent}
+          scrollEnabled={vehicleOptions.length > 3}
+          style={s.vehicleScroll}
+          contentContainerStyle={vehicleOptions.length <= 3 ? { flex: 1, gap: 10, paddingVertical: 4 } : s.vehicleScrollContent}
         >
-          {vehicleOptions.map(({ key, icon, labelKey, specKey }) => {
+          {vehicleOptions.map(({ key, icon, labelKey, specKey, passengers }) => {
             const active = vehicleType === key
             return (
               <TouchableOpacity
                 key={key}
-                style={[s.vehicleBtn, active && s.vehicleBtnActive]}
+                style={[s.vehicleBtn, vehicleOptions.length <= 3 ? { flex: 1 } : { width: VEHICLE_BTN_W }, active && s.vehicleBtnActive]}
                 onPress={() => setVehicleType(key)}
                 activeOpacity={0.8}
               >
-                <Ionicons name={icon as any} size={28} color={active ? '#fff' : BRAND} />
+                <Ionicons name={icon as any} size={26} color={active ? '#fff' : BRAND} />
                 <Text style={[s.vehicleBtnText, active && s.vehicleBtnTextActive]}>{t(labelKey)}</Text>
-                <Text style={[s.vehicleBtnSpec, active && s.vehicleBtnSpecActive]}>{t(specKey)}</Text>
+                {passengers != null ? (
+                  <View style={s.passengerRow}>
+                    <Text style={[s.passengerCount, active && s.passengerCountActive]}>{passengers}</Text>
+                    <Ionicons name="person" size={11} color={active ? 'rgba(255,255,255,0.85)' : '#64748B'} />
+                  </View>
+                ) : (
+                  <Text style={[s.vehicleBtnSpec, active && s.vehicleBtnSpecActive]}>{t(specKey)}</Text>
+                )}
               </TouchableOpacity>
             )
           })}
         </ScrollView>
-
-        <Text style={s.scrollHint}>← Trượt qua lại để xem tiếp →</Text>
+        {vehicleOptions.length > 3 && (
+          <Text style={s.scrollHint}>← Trượt qua lại để xem tiếp →</Text>
+        )}
 
         <View style={s.inputWrap}>
           <Ionicons name="car-outline" size={18} color={BRAND} style={s.inputIcon} />
@@ -358,12 +370,16 @@ const s = StyleSheet.create({
 
   vehicleScroll:        { width: '100%', marginBottom: 18 },
   vehicleScrollContent: { gap: 10, paddingVertical: 4 },
-  vehicleBtn:      { flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5, minWidth: 110, paddingHorizontal: 18, paddingVertical: 16, borderRadius: 16, borderWidth: 1.5, borderColor: BRAND_LIGHT, backgroundColor: BRAND_MUTED },
+  vehicleBtn:      { flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5, width: VEHICLE_BTN_W, paddingHorizontal: 8, paddingVertical: 14, borderRadius: 16, borderWidth: 1.5, borderColor: BRAND_LIGHT, backgroundColor: BRAND_MUTED },
   vehicleBtnActive: { backgroundColor: BRAND, borderColor: BRAND },
   vehicleBtnText:   { fontSize: 14, fontWeight: '700', color: BRAND, textAlign: 'center' },
   vehicleBtnTextActive: { color: '#fff' },
   vehicleBtnSpec:   { fontSize: 11, color: BRAND, opacity: 0.55, textAlign: 'center' },
   vehicleBtnSpecActive: { color: '#fff', opacity: 0.8 },
+  iconWrap: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  passengerRow: { flexDirection: 'row', gap: 3, alignItems: 'center', justifyContent: 'center' },
+  passengerCount: { fontSize: 12, fontWeight: '700', color: '#64748B' },
+  passengerCountActive: { color: 'rgba(255,255,255,0.85)' },
 
   scrollHint: { fontSize: 11, color: '#94A3B8', alignSelf: 'center', marginTop: -10, marginBottom: 10 },
 

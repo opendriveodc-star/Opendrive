@@ -5,7 +5,7 @@
         "info": {
           ".read":     "auth != null",
           ".write":    "auth != null && !data.exists()",
-          ".validate": "newData.hasChildren(['customerPhone', 'pickupGeohash', 'dropGeohash', 'vehicleType', 'createdAt']) && newData.child('vehicleType').val().matches(/^(motorbike|car4|car7|pickup)$/) && newData.child('createdAt').isNumber()"
+          ".validate": "newData.hasChildren(['customerPhone', 'pickupGeohash', 'dropGeohash', 'vehicleType', 'createdAt']) && newData.child('vehicleType').val().matches(/^(motorbike|car4|car6|pickup)$/) && newData.child('createdAt').isNumber()"
         },
         "quotes": {
           ".read": "auth != null",

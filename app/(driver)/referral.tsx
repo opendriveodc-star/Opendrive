@@ -11,6 +11,8 @@ import { Ionicons } from '@expo/vector-icons'
 import * as Clipboard from 'expo-clipboard'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
+import { WebView } from 'react-native-webview'
+import QRCode from 'qrcode'
 import { getDriverInfo } from '../../src/utils/storage'
 import { ODC } from '../../src/constants'
 import type { DriverInfo } from '../../src/types'
@@ -21,10 +23,20 @@ const BRAND_LIGHT = '#E8EDF6'
 export default function ReferralScreen() {
   const { t } = useTranslation()
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null)
+  const [qrHtml, setQrHtml] = useState('')
 
   useEffect(() => { getDriverInfo().then(setDriverInfo) }, [])
 
   const referralCode = driverInfo?.uid ?? ''
+
+  useEffect(() => {
+    if (!referralCode) return
+    QRCode.toString(referralCode, { type: 'svg', margin: 1 })
+      .then(svg => {
+        setQrHtml(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;display:flex;justify-content:center;align-items:center;}svg{width:100%;height:100%;}</style></head><body>${svg}</body></html>`)
+      })
+      .catch(() => {})
+  }, [referralCode])
 
   async function copyCode() {
     if (!referralCode) return
@@ -66,6 +78,16 @@ export default function ReferralScreen() {
           </View>
           <Text style={styles.codeHint}>{t('settings.referralCode', { code: '' }).replace(':', '').trim()}</Text>
           <Text style={styles.codeText}>{referralCode || '——'}</Text>
+          {qrHtml ? (
+            <View style={styles.qrContainer}>
+              <WebView
+                source={{ html: qrHtml }}
+                style={styles.qrWebView}
+                scrollEnabled={false}
+                scalesPageToFit={false}
+              />
+            </View>
+          ) : null}
           <View style={styles.codeBtns}>
             <TouchableOpacity style={styles.copyBtn} onPress={copyCode}>
               <Ionicons name="copy-outline" size={16} color={BRAND} />
@@ -125,6 +147,12 @@ const styles = StyleSheet.create({
   codeIconWrap: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   codeHint:  { fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 4 },
   codeText:  { fontSize: 14, fontWeight: '800', color: '#fff', letterSpacing: 1, marginBottom: 20, textAlign: 'center' },
+  qrContainer: {
+    width: 160, height: 160,
+    backgroundColor: '#fff', borderRadius: 12,
+    padding: 8, marginBottom: 16, overflow: 'hidden',
+  },
+  qrWebView: { width: '100%', height: '100%', backgroundColor: '#fff' },
   codeBtns:  { flexDirection: 'row', gap: 10, width: '100%' },
   copyBtn:   { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#fff', paddingVertical: 10, borderRadius: 10 },
   copyBtnText: { fontSize: 14, fontWeight: '600', color: BRAND },

@@ -6,14 +6,14 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-24 (session 29 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-25 (session 31 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
 
 - Config, types, constants, i18n (vi/en), services, hooks, utils ✅
 - Tất cả screens: auth, driver, customer, mining ✅
-- 9 Cloudflare Workers deployed ✅
+- 10 Cloudflare Workers deployed ✅
 - Firebase Rules deployed, EAS Build APK chạy được ✅
 - Customer home: 5-panel horizontal flow (Vehicle→Pickup→Dest→Book→Quotes) ✅
 - Driver flow: Stack navigation, online screen, settings, wallet, referral ✅
@@ -44,7 +44,7 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **`online.tsx` polish:** map không giật (getLastKnownPositionAsync + AsyncStorage cache), `navigateAway()` slide panel xuống trước khi navigate, bottom sheet 3-level (handle/partial/expand), nút định vị render sau sheet (`elevation: 25`), `L2_GAP = 120` để sheet không che nút định vị
 - **Session 24:** Anti-fraud + Customer penalty system ✅
   - **Driver fraud:** Firestore `pendingTrip: boolean` flag trên `drivers/{uid}` — set `true` khi nhận chuyến, set `false` sau blockchain submit. Nếu tài xế xóa data rồi đăng nhập lại mà `pendingTrip=true` → lock 48h từ đầu. Timer chỉ lưu SecureStore (xóa data = tính lại từ đầu — đây là thiết kế có chủ đích)
-  - **Thông báo hủy chuyến** qua RTDB: khách hủy → ghi `trips/{tripId}/cancelled = 'customer'` → tài xế detect trong poll → alert → về online; tài xế hủy → ghi `'driver'` → khách detect → lưu thông tin chuyến vào AsyncStorage `retry_trip_data` → về home với thông tin đã điền sẵn
+  - **Thông báo hủy chuyến** (cơ chế cũ, đã thay bằng FCM ở Session 30): qua RTDB field `cancelled` + poll 3s
   - **Pickup proximity lock** (`trip.tsx`): nút "Đã đến điểm đón" bị khóa cho đến khi tài xế cách điểm đón ≤100m. Kiểm tra mỗi 5s. Hiện khoảng cách còn lại khi chưa đến.
   - **Dropoff proximity lock** (`trip.tsx`): tương tự, nút "Hoàn thành chuyến" khóa cho đến khi cách điểm đến ≤100m.
   - **Customer penalty system** (`blacklist_customers/{phone}` dùng phone làm doc ID):
@@ -136,7 +136,7 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
     - Khi `true` → local notification "🚗 Tài xế đã đến điểm đón / Hãy ra xe ngay nhé!"
     - `dismissArrivedNotif()` gọi khi trip kết thúc hoặc bị hủy
   - **`app/(customer)/tracking.tsx`** — RTDB poll optimization:
-    - Khi detect `picked_up`: stop `locationPollRef` + `statusPollRef` + `cancelPollRef` + `arrivedPollRef` luôn
+    - Khi detect `picked_up`: stop `locationPollRef` + `statusPollRef` + `arrivedPollRef` luôn
     - Sau pickup: **0 RTDB request** trong suốt hành trình, chỉ còn proximity trigger GPS nội bộ
     - Nút "Hủy chuyến" hiện cả khi `tripStatus === 'picked_up'` — khách tự hủy nếu cần, không cần poll
   - **`app/(driver)/trip.tsx`**:
@@ -145,9 +145,32 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
     - Fix bug: xóa `bridgeRef.current?.stop()` không tồn tại
   - **`workers/cleanup-blacklist`**: cutoff 48h → 72h, **redeploy thành công** ✅
 
-### Bàn giao Session 30 – Bắt đầu từ đây
+- **Session 31:** Nút SOS blockchain + Worker 10 sos-alert ✅
+  - **Nút SOS** (`src/components/SosButton.tsx`): nút tròn đỏ 72px, 3 vòng ripple animation staggered 600ms, giữ 3s → đếm ngược 3→2→1 → "Tín hiệu đã gửi"; disabled sau khi kích hoạt; instruction text bên dưới
+  - **Vị trí nút:** floating `position: absolute, right: 16` phía trên panel — `onLayout` đo panel height, `bottom: panelH + 12`; áp dụng cả `trip.tsx` (driver) và `tracking.tsx` (customer)
+  - **SOS Wallet mới:** `GBXS3WEDTC6ZJONLNA7OYMZ34OXC43PPCDMEVRR2MKBMOOJREDRUEHFW` — funded testnet 10,000 XLM, ODC trustline đã tạo; private key lưu `OneDrive/Desktop/sos-wallet-keys.txt`
+  - **Worker 10** (`cloudflare-workers/sos-alert`): Distributor → SOS wallet, 0.0000001 ODC, fee-bump; tự tạo ODC trustline nếu chưa có; deployed + tất cả secrets set ✅
+  - **`encodeSosMemo()`** (`src/services/odc.ts`): memo 27 bytes — [0-4] driver BCD, [5-9] customer BCD, [10-13] lat×1M int32, [14-17] lng×1M int32, [18-25] zeros, [26] 0x01=driver/0x02=customer; timestamp KHÔNG encode (dùng ledger time của blockchain)
+  - **`sosAlert()`** (`src/services/cloudflare.ts`): gọi Worker 10, fire-and-forget (`.catch(() => {})`)
+  - **`src/constants/index.ts`**: thêm `STELLAR.SOS_ADDRESS`, `WORKER.SOS_ALERT`
+  - **`app/(driver)/trip.tsx`**: `handleSOS()` lấy GPS hiện tại → encode memo → gọi Worker ngầm; `sosSent` state prevent double-trigger
+  - **`app/(customer)/tracking.tsx`**: tương tự; đọc thêm `driverPhone` từ `trips/{id}/trip_info`, `customerPhone` từ SecureStore CUSTOMER_INFO
 
-**Tình trạng:** Driver + Customer flow hoàn chỉnh và ổn định. QR codes + vehicle icons hoàn chỉnh. Build APK debug chưa hoàn thành (đang retry Gradle 8.14).
+- **Session 30:** FCM cancel notification + Worker 10 ✅
+  - **Vấn đề cũ:** hủy chuyến dùng RTDB `trips/{id}/cancelled` + `cancelPollRef` 3s → tốn băng thông, không hoạt động khi app bị kill/background
+  - **Worker 10** (`cloudflare-workers/notify-cancel`): POST `/api/notify-cancel` — nhận `{ tripId, reason, targetFcmToken, cancellerName? }`, gửi FCM với `notification` (system tray) + `data` payload. Deployed + secrets set ✅
+  - **`app/(customer)/home.tsx`**: lấy `customerFcmToken` qua `Notifications.getDevicePushTokenAsync()` trước khi tạo trip, lưu vào `trips/{tripId}/info`
+  - **`app/(driver)/trip.tsx`**: đọc `customerFcmToken` từ RTDB info khi vào màn hình; ghi `driverFcmToken` vào `trip_info`; `handleAbandon()` gọi `notifyCancel()` thay RTDB write; FCM foreground listener + `cancelledHandledRef` chống double alert
+  - **`app/(customer)/tracking.tsx`**: đọc `driverFcmToken` từ `trip_info`; `handleDriverCancelledAlert(cancellerName?)` hiện tên tài xế nếu có từ FCM data; `handleCancel()` gọi `notifyCancel()` thay RTDB write; FCM foreground listener
+  - **Xóa hoàn toàn:** `cancelPollRef` (3s RTDB poll) + `trips/{id}/cancelled` RTDB field — 0 RTDB request cho cancel detection
+  - **`src/constants/index.ts`**: thêm `WORKER.NOTIFY_CANCEL`
+  - **`src/services/cloudflare.ts`**: thêm `notifyCancel(tripId, reason, targetFcmToken, cancellerName?)`
+  - **i18n** vi/en: thêm `cancel.driverCancelledBy` = "{{name}} đã hủy chuyến" / "{{name}} cancelled your trip"
+  - **RTDB rules:** không cần cập nhật — `customerFcmToken` trong `info` (write-once), `driverFcmToken` trong `trip_info` (write allowed)
+
+### Bàn giao Session 32 – Bắt đầu từ đây
+
+**Tình trạng:** Driver + Customer flow hoàn chỉnh. SOS blockchain feature hoàn chỉnh (Worker 10 deployed, nút UI trong trip + tracking). Build APK debug chưa hoàn thành (đang retry Gradle 8.14).
 
 ### Việc cần làm tiếp theo
 
@@ -159,7 +182,78 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
 
 ---
 
-## 1. TỔNG QUAN DỰ ÁN
+## 1. QUY TRÌNH BUILD & CHẠY APP (ĐỌC TRƯỚC KHI BUILD)
+
+### Môi trường
+- **Java:** Chỉ có Java 25 (Temurin) trên hệ thống — **KHÔNG dùng được** với Gradle
+- **JAVA_HOME đúng:** `C:\Program Files\Android\Android Studio\jbr` (Java 21, embedded trong Android Studio)
+- **ANDROID_HOME:** `$env:LOCALAPPDATA\Android\Sdk`
+- **Gradle:** 8.14 (đã cache sau lần build đầu, không cần download lại)
+- **Samsung:** `R5GL24QSTMR` (SM-A175F), kết nối USB
+
+### Build + chạy trên emulator (Pixel 6)
+```powershell
+# 1. Khởi động emulator (nếu chưa mở)
+& "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd Pixel_6 -no-snapshot-load
+
+# 2. Chờ boot xong
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" wait-for-device shell getprop sys.boot_completed
+
+# 3. Build + install (dùng Java 21 của Android Studio)
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+Set-Location D:\OpenDrive
+npx expo run:android
+```
+
+> Lần đầu build ~12 phút. Lần sau ~2-3 phút (Gradle cache).
+> Nếu lỗi `INSTALL_FAILED_UPDATE_INCOMPATIBLE`: uninstall app cũ trước
+> ```powershell
+> & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" uninstall com.opendrive.app
+> ```
+
+### Build + chạy trên Samsung thật (USB)
+```powershell
+# 1. Build APK (Java 21)
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+Set-Location D:\OpenDrive
+npx expo run:android   # tự detect Samsung nếu là thiết bị duy nhất
+
+# Hoặc chỉ định thiết bị cụ thể:
+$env:ANDROID_SERIAL = "R5GL24QSTMR"
+npx expo run:android
+
+# 2. Nếu build đã có APK rồi, chỉ cần install + forward:
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb -s R5GL24QSTMR install -r "D:\OpenDrive\android\app\build\outputs\apk\debug\app-debug.apk"
+& $adb -s R5GL24QSTMR reverse tcp:8081 tcp:8081
+& $adb -s R5GL24QSTMR reverse tcp:8082 tcp:8082
+
+# 3. Khởi động Metro riêng (nếu chưa chạy)
+npx expo start --port 8081
+```
+
+> Samsung phải bật **USB Debugging**. Nếu bị chặn: tắt "Hạn chế USB" trong Bảo mật & Quyền riêng tư.
+> ADB reverse giúp Samsung kết nối Metro trên máy tính qua cáp USB (không cần cùng WiFi).
+
+### Kiểm tra kết nối
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" devices -l
+# Phải thấy: R5GL24QSTMR (Samsung) và/hoặc emulator-5554
+```
+
+### Khi cần prebuild lại (thêm native module mới)
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+Set-Location D:\OpenDrive
+npx expo prebuild --clean --platform android
+# Sau đó build lại bình thường
+```
+
+---
+
+## 2. TỔNG QUAN DỰ ÁN
 
 - **Tên:** OpenDrive – App cộng đồng phi lợi nhuận cho tài xế xe công nghệ
 - **Doanh thu:** Quảng cáo in-app
@@ -219,17 +313,20 @@ db.collection("drivers")
 ```
 /trips/{tripId}/
   info: { customerPhone, pickupGeohash, dropGeohash, pickupLat, pickupLng, dropLat, dropLng,
-          vehicleType, estimatedKm, pickupAddress, destAddress, note, status, createdAt }
+          vehicleType, estimatedKm, pickupAddress, destAddress, note, status, createdAt,
+          customerFcmToken }                 // khách ghi lúc tạo trip (dùng để Worker 10 notify)
   quotes/{driverUid}: { price, estimatedDistance, driverName, rating, vehicleInfo }
   location: { lat, lng, timestamp }          // tài xế ghi mỗi 3s khi đến đón
   trip_status: 'picked_up' | 'completed'     // tài xế ghi
-  trip_info: { driverName, driverPhone, vehicleBrand, licensePlate }  // tài xế ghi 1 lần
+  trip_info: { driverName, driverPhone, vehicleBrand, licensePlate, driverFcmToken }  // tài xế ghi 1 lần
   driver_at_pickup: true                     // tài xế ghi khi bấm "Đã đến điểm đón"
   rating: 1-5                                // khách ghi sau khi trip_status=completed
 /drivers_online/{uid}/lastSeen
 ```
 
 **Ai xóa tripId:** Khách hủy → khách xóa; hết 25s → client khách xóa; tài xế kết thúc → tài xế xóa. Worker 6 cron 3h sáng dọn >24h.
+
+**Hủy chuyến:** KHÔNG dùng RTDB field `cancelled` — toàn bộ qua FCM (Worker 10). App killed/background vẫn nhận được.
 
 **WebRTC đã bị xóa hoàn toàn** – không còn dùng react-native-webrtc, ICE, TURN, DataChannel. Toàn bộ in-trip messaging qua RTDB REST API polling 3s.
 
@@ -281,9 +378,13 @@ db.collection("drivers")
 | 6 | Cron 3h sáng UTC+7 | Xóa tripId >24h trên Realtime DB |
 | 7 | POST /api/mining-report | Cộng điểm đào coin vào Firestore miners |
 | 8 | POST /api/exchange-points | Đổi điểm → ODC từ Distributor |
-| 9 | Cron 3h sáng UTC+7 | Dọn blacklist_customers đã hết hạn >48h |
+| 9 | Cron 3h sáng UTC+7 | Dọn blacklist_customers đã hết hạn >72h |
+| 10 | POST /api/sos-alert | Ghi SOS lên Stellar: Distributor → SOS wallet, 27-byte memo (lat/lng/SĐT/ai nhấn) |
+| 10 | POST /api/notify-cancel | FCM thông báo hủy chuyến đến bên kia (tài xế hoặc khách) |
 
-**Secrets:** `STELLAR_ISSUER_PRIVATE_KEY`, `STELLAR_DISTRIBUTOR_PRIVATE_KEY`, `STELLAR_FEEBUMP_PRIVATE_KEY`, `STELLAR_ISSUER_ADDRESS`, `STELLAR_DISTRIBUTOR_ADDRESS`, `STELLAR_TRANSACTION_ADDRESS`, `FIREBASE_SERVICE_ACCOUNT`, `MASTER_ENCRYPTION_KEY`, `CLOUDFLARE_TURN_KEY_ID`
+**Secrets:** `STELLAR_ISSUER_PRIVATE_KEY`, `STELLAR_DISTRIBUTOR_PRIVATE_KEY`, `STELLAR_FEEBUMP_PRIVATE_KEY`, `STELLAR_ISSUER_ADDRESS`, `STELLAR_DISTRIBUTOR_ADDRESS`, `STELLAR_TRANSACTION_ADDRESS`, `STELLAR_SOS_ADDRESS`, `STELLAR_SOS_PRIVATE_KEY`, `FIREBASE_SERVICE_ACCOUNT`, `MASTER_ENCRYPTION_KEY`, `CLOUDFLARE_TURN_KEY_ID`
+
+**SOS Wallet:** `GBXS3WEDTC6ZJONLNA7OYMZ34OXC43PPCDMEVRR2MKBMOOJREDRUEHFW` — private key trong `OneDrive/Desktop/sos-wallet-keys.txt`; testnet funded + ODC trustline tạo sẵn
 
 ---
 

@@ -27,6 +27,7 @@ import { SecureStoreKey } from '../../src/types'
 import { TRANSPORT_MODELS } from '../../src/data/vehicles'
 import type { TransportModel } from '../../src/data/vehicles'
 import { TRIP } from '../../src/constants'
+import * as Notifications from 'expo-notifications'
 import { nanoid } from '../../src/utils/nanoid'
 
 const BRAND = '#1A2E5E'
@@ -44,9 +45,9 @@ const SNAP_Y: Record<0|1|2, number> = {
   0: FULL_H - HANDLE_H,
 }
 
-// Vehicle carousel card width (full-width panel minus 2×padding)
+// Vehicle carousel card width – 3 cards vừa khít, vẫn scroll nếu thêm xe
 const INNER_W = SCREEN_W - 40
-const CARD_W  = Math.floor(INNER_W / 2.2)
+const CARD_W  = Math.floor((INNER_W - 20) / 3)  // 20 = 2 gaps × 10
 
 const INIT_LAT = 10.7769
 const INIT_LNG = 106.7009
@@ -405,23 +406,30 @@ export default function CustomerHomeScreen() {
       const dropGeohash   = geohashForQuery(dest.lat,   dest.lng)
       const km = distKm ?? await getRouteDistanceKm(pickup.lat, pickup.lng, dest.lat, dest.lng)
 
+      let customerFcmToken = ''
+      try {
+        const tokenData = await Notifications.getDevicePushTokenAsync()
+        customerFcmToken = tokenData.data as string
+      } catch {}
+
       const tripId = nanoid()
       await rtdb.set(`trips/${tripId}/info`, {
-        customerPhone:  info.phone,
+        customerPhone:    info.phone,
         pickupGeohash,
         dropGeohash,
-        pickupLat:      pickup.lat,
-        pickupLng:      pickup.lng,
-        dropLat:        dest.lat,
-        dropLng:        dest.lng,
-        vehicleType:    vehicle,
+        pickupLat:        pickup.lat,
+        pickupLng:        pickup.lng,
+        dropLat:          dest.lat,
+        dropLng:          dest.lng,
+        vehicleType:      vehicle,
         transportModel,
-        estimatedKm:    Math.max(1, Math.round(km * 10) / 10),
-        pickupAddress:  pickup.address,
-        destAddress:    dest.address,
-        note:           note.trim(),
-        createdAt:      Date.now(),
-        status:         'waiting',
+        estimatedKm:      Math.max(1, Math.round(km * 10) / 10),
+        pickupAddress:    pickup.address,
+        destAddress:      dest.address,
+        note:             note.trim(),
+        createdAt:        Date.now(),
+        status:           'waiting',
+        customerFcmToken,
       })
       await notifyDrivers(tripId, pickupGeohash, vehicle)
       setActiveTripId(tripId)
@@ -765,9 +773,11 @@ function VehiclePanel({ vehicle, transportModel, onVehicleChange, onTransportMod
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          scrollEnabled={vehicles.length > 3}
           snapToInterval={CARD_W + 10}
+          snapToAlignment="start"
           decelerationRate="fast"
-          contentContainerStyle={{ paddingRight: 4 }}
+          contentContainerStyle={vehicles.length <= 3 ? { flex: 1, gap: 10, paddingVertical: 2 } : { paddingRight: 4 }}
           style={{ marginBottom: 2 }}
         >
           {vehicles.map((v: any) => {
@@ -775,25 +785,34 @@ function VehiclePanel({ vehicle, transportModel, onVehicleChange, onTransportMod
             return (
               <TouchableOpacity
                 key={`${transportModel}-${v.key}`}
-                style={[sub.vehicleCard, active && sub.vehicleCardActive, { width: CARD_W, marginRight: 10 }]}
+                style={[sub.vehicleCard, active && sub.vehicleCardActive, vehicles.length <= 3 ? { flex: 1 } : { width: CARD_W, marginRight: 10 }]}
                 onPress={() => onVehicleChange(v.key)}
                 activeOpacity={0.75}
               >
-                <Ionicons name={v.icon} size={28} color={active ? '#fff' : BRAND} />
+                <Ionicons name={v.icon} size={26} color={active ? '#fff' : BRAND} />
                 <Text style={[sub.vehicleCardLabel, active && sub.vehicleCardLabelActive]}>
                   {t(`vehicle.${v.key}`)}
                 </Text>
-                <Text style={[sub.vehicleCardSpec, active && sub.vehicleCardSpecActive]}>
-                  {t(v.specKey)}
-                </Text>
+                {v.passengers != null ? (
+                  <View style={sub.passengerRow}>
+                    <Text style={[sub.passengerCount, active && sub.passengerCountActive]}>{v.passengers}</Text>
+                    <Ionicons name="person" size={11} color={active ? 'rgba(255,255,255,0.85)' : '#64748B'} />
+                  </View>
+                ) : (
+                  <Text style={[sub.vehicleCardSpec, active && sub.vehicleCardSpecActive]}>
+                    {t(v.specKey)}
+                  </Text>
+                )}
               </TouchableOpacity>
             )
           })}
         </ScrollView>
-        <Text style={sub.vehicleScrollHint}>{t('trip.vehicleScrollHint')}</Text>
+        {vehicles.length > 3 && (
+          <Text style={sub.vehicleScrollHint}>{t('trip.vehicleScrollHint')}</Text>
+        )}
       </ScrollView>
 
-      <TouchableOpacity style={[sub.confirmBtn, { marginBottom: insetBottom || 4 }]} onPress={onConfirm} activeOpacity={0.85}>
+      <TouchableOpacity style={[sub.confirmBtn, { marginBottom: (insetBottom || 0) + 16 }]} onPress={onConfirm} activeOpacity={0.85}>
         <Text style={sub.confirmBtnText}>{t('common.continue')}</Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
       </TouchableOpacity>
@@ -1120,6 +1139,10 @@ const sub = StyleSheet.create({
   vehicleCardLabelActive: { color: '#fff' },
   vehicleCardSpec:      { fontSize: 11, color: '#64748B', textAlign: 'center', marginTop: 2 },
   vehicleCardSpecActive:  { color: 'rgba(255,255,255,0.75)' },
+  iconWrap: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  passengerRow: { flexDirection: 'row' as const, gap: 3, alignItems: 'center' as const, justifyContent: 'center' as const, marginTop: 3 },
+  passengerCount: { fontSize: 12, fontWeight: '700' as const, color: '#64748B' },
+  passengerCountActive: { color: 'rgba(255,255,255,0.85)' },
   vehicleScrollHint:    { fontSize: 13, color: '#94A3B8', textAlign: 'center', marginTop: 6, marginBottom: 2 },
 
   // Route summary (step 3)
