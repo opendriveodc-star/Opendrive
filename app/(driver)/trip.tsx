@@ -215,15 +215,19 @@ export default function TripScreen() {
   async function handleSOS() {
     if (sosSent || !driverInfoRef.current || !pendingTripRef.current) return
     setSosSent(true)
+
+    // Location fail vẫn gửi SOS với toạ độ 0 — còn hơn không ghi blockchain
+    let lat = 0, lng = 0
     try {
-      const loc  = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-      const lat  = loc.coords.latitude
-      const lng  = loc.coords.longitude
-      const drv  = driverInfoRef.current
-      const trip = pendingTripRef.current
-      const memo27bytes = encodeSosMemo(drv.phone, trip.customerPhone, lat, lng, drv.licensePlate ?? '', 'driver')
-      sosAlert({ driverPhone: drv.phone, customerPhone: trip.customerPhone, lat, lng, triggeredBy: 'driver', memo27bytes }).catch(() => {})
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+      lat = loc.coords.latitude
+      lng = loc.coords.longitude
     } catch {}
+
+    const drv  = driverInfoRef.current
+    const trip = pendingTripRef.current
+    const memo27bytes = encodeSosMemo(drv.phone, trip.customerPhone, lat, lng, drv.licensePlate ?? '', 'driver')
+    sosAlert({ driverPhone: drv.phone, customerPhone: trip.customerPhone, lat, lng, triggeredBy: 'driver', memo27bytes }).catch(() => {})
   }
 
   function handleAbandon() {

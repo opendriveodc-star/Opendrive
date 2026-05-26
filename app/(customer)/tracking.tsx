@@ -289,16 +289,20 @@ export default function TrackingScreen() {
   async function handleSOS() {
     if (sosSent) return
     setSosSent(true)
+
+    // Location fail vẫn gửi SOS với toạ độ 0 — còn hơn không ghi blockchain
+    let lat = 0, lng = 0
     try {
-      const loc    = await getCurrentLocation()
-      const lat    = loc.lat
-      const lng    = loc.lng
-      const dPhone = driverPhoneRef.current
-      const cPhone = customerPhoneRef.current
-      const plate       = driverInfoRef.current?.licensePlate ?? ''
-      const memo27bytes = encodeSosMemo(dPhone, cPhone, lat, lng, plate, 'customer')
-      sosAlert({ driverPhone: dPhone, customerPhone: cPhone, lat, lng, triggeredBy: 'customer', memo27bytes }).catch(() => {})
+      const loc = await getCurrentLocation()
+      lat = loc.lat
+      lng = loc.lng
     } catch {}
+
+    const dPhone = driverPhoneRef.current
+    const cPhone = customerPhoneRef.current
+    const plate  = driverInfoRef.current?.licensePlate ?? ''
+    const memo27bytes = encodeSosMemo(dPhone, cPhone, lat, lng, plate, 'customer')
+    sosAlert({ driverPhone: dPhone, customerPhone: cPhone, lat, lng, triggeredBy: 'customer', memo27bytes }).catch(() => {})
   }
 
   function handleCancel() {
@@ -356,13 +360,13 @@ export default function TrackingScreen() {
       const updated = { ...info, cancelCount: newCount }
       await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_INFO, JSON.stringify(updated))
       if (newCount >= 3) {
-        const lockUntil = Date.now() + LOCK_72H
+        const lockUntil = Date.now() + LOCK_48H
         await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL, String(lockUntil))
         setCustomerLockedUntil(info.phone, lockUntil).catch(() => {})
         showAlert(
           t('lock.title'),
           t('lock.reason.frequentCancel'),
-          [{ text: 'OK', onPress: () => router.replace({ pathname: '/lock-screen', params: { lockedUntil: String(lockUntil), reason: t('lock.reason.frequentCancel') } }) }],
+          [{ text: 'OK', onPress: () => router.replace({ pathname: '/lock-screen', params: { lockedUntil: String(lockUntil), reason: 'frequentCancel' } }) }],
         )
       }
     } catch {}
@@ -384,6 +388,7 @@ export default function TrackingScreen() {
       >
         <View {...panResponder.panHandlers} style={styles.handleArea}>
           <View style={styles.handle} />
+          <Text style={styles.handleHint}>Trượt lên để thấy nút SOS</Text>
         </View>
 
         {driverInfo ? (
@@ -452,8 +457,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingTop: 12,
     elevation: 20, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 16, shadowOffset: { width: 0, height: -4 },
   },
-  handleArea:  { alignItems: 'center', paddingTop: 4, paddingBottom: 8, marginBottom: 8 },
+  handleArea:  { alignItems: 'center', paddingTop: 10, paddingBottom: 10, marginBottom: 4 },
   handle:      { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0' },
+  handleHint:  { fontSize: 11, color: 'rgba(26,46,94,0.45)', fontWeight: '600', marginTop: 5 },
   sosDivider:  { height: 1, backgroundColor: '#E2E8F0', marginHorizontal: -20, marginTop: 8 },
   sosSection:  { alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
   driverRow:           { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 10 },
