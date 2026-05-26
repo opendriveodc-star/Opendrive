@@ -6,7 +6,7 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-25 (session 31 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-26 (session 32 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
@@ -147,14 +147,22 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
 
 - **Session 31:** Nút SOS blockchain + Worker 10 sos-alert ✅
   - **Nút SOS** (`src/components/SosButton.tsx`): nút tròn đỏ 72px, 3 vòng ripple animation staggered 600ms, giữ 3s → đếm ngược 3→2→1 → "Tín hiệu đã gửi"; disabled sau khi kích hoạt; instruction text bên dưới
-  - **Vị trí nút:** floating `position: absolute, right: 16` phía trên panel — `onLayout` đo panel height, `bottom: panelH + 12`; áp dụng cả `trip.tsx` (driver) và `tracking.tsx` (customer)
   - **SOS Wallet mới:** `GBXS3WEDTC6ZJONLNA7OYMZ34OXC43PPCDMEVRR2MKBMOOJREDRUEHFW` — funded testnet 10,000 XLM, ODC trustline đã tạo; private key lưu `OneDrive/Desktop/sos-wallet-keys.txt`
   - **Worker 10** (`cloudflare-workers/sos-alert`): Distributor → SOS wallet, 0.0000001 ODC, fee-bump; tự tạo ODC trustline nếu chưa có; deployed + tất cả secrets set ✅
-  - **`encodeSosMemo()`** (`src/services/odc.ts`): memo 27 bytes — [0-4] driver BCD, [5-9] customer BCD, [10-13] lat×1M int32, [14-17] lng×1M int32, [18-25] zeros, [26] 0x01=driver/0x02=customer; timestamp KHÔNG encode (dùng ledger time của blockchain)
   - **`sosAlert()`** (`src/services/cloudflare.ts`): gọi Worker 10, fire-and-forget (`.catch(() => {})`)
   - **`src/constants/index.ts`**: thêm `STELLAR.SOS_ADDRESS`, `WORKER.SOS_ALERT`
   - **`app/(driver)/trip.tsx`**: `handleSOS()` lấy GPS hiện tại → encode memo → gọi Worker ngầm; `sosSent` state prevent double-trigger
   - **`app/(customer)/tracking.tsx`**: tương tự; đọc thêm `driverPhone` từ `trips/{id}/trip_info`, `customerPhone` từ SecureStore CUSTOMER_INFO
+
+- **Session 32:** SOS UX redesign + Blockchain SOS log + vehicle spec icon + proximity 150m ✅
+  - **`SosButton.tsx`** redesign: nút xanh lá (GREEN `#22C55E`) 64px, vòng tròn tiến độ (half-circle technique, `useNativeDriver`), 3 ripple waves xanh nhạt, `Vibration` khi kích hoạt; bỏ đỏ, bỏ floating
+  - **SOS ẩn trong panel** (`trip.tsx` + `tracking.tsx`): `SOS_SECTION_H = 220` — panel dịch xuống 220px ban đầu (ẩn phần SOS); kéo tay cầm lên để tiết lộ. `PanResponder` trên `handleArea`, `Animated.spring` snap 2 mức (collapsed / expanded). Xóa `panelH` state + `LayoutChangeEvent`
+  - **`encodeSosMemo()`** (`src/services/odc.ts`): nâng lên **32 bytes** — thêm `licensePlate` param; [18-27] biển số ASCII null-padded, [28] triggeredBy; gọi trong `handleSOS()` của cả 2 màn hình
+  - **`app/blockchain.tsx`** — chế độ SOS: giữ tiêu đề **5 giây** → `Vibration` + chuyển mode `trip ↔ sos`; `decodeSosMemo()` decode 32-byte (hỗ trợ cả format cũ 27-byte); card đỏ nhạt hiện SĐT (ẩn giữa), biển số, tọa độ, nút "Bản đồ" + "Stellar"
+  - **`tracking.tsx`**: thêm `driverPhone` state + chip gọi điện (SĐT ẩn giữa, `Linking.openURL tel:`); `vehicleColor` trong `driverInfo`; `driverPhone` lấy từ `trip_info` (không cần poll riêng)
+  - **`register.tsx` + `driver-info.tsx`**: xe không có passengers (freight) hiện `cube-outline` icon + bold spec text thay vì plain text
+  - **Ngưỡng proximity: 100m → 150m** — pickup lock, dropoff lock, rating trigger (cả driver + customer)
+  - **i18n**: `bookTitle` = "Xác nhận điểm đón và đến", `selectVehicleTitle` cải thiện, `specTruck` đơn giản hóa
 
 - **Session 30:** FCM cancel notification + Worker 10 ✅
   - **Vấn đề cũ:** hủy chuyến dùng RTDB `trips/{id}/cancelled` + `cancelPollRef` 3s → tốn băng thông, không hoạt động khi app bị kill/background
@@ -168,15 +176,14 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **i18n** vi/en: thêm `cancel.driverCancelledBy` = "{{name}} đã hủy chuyến" / "{{name}} cancelled your trip"
   - **RTDB rules:** không cần cập nhật — `customerFcmToken` trong `info` (write-once), `driverFcmToken` trong `trip_info` (write allowed)
 
-### Bàn giao Session 32 – Bắt đầu từ đây
+### Bàn giao Session 33 – Bắt đầu từ đây
 
-**Tình trạng:** Driver + Customer flow hoàn chỉnh. SOS blockchain feature hoàn chỉnh (Worker 10 deployed, nút UI trong trip + tracking). Build APK debug chưa hoàn thành (đang retry Gradle 8.14).
+**Tình trạng:** Driver + Customer flow hoàn chỉnh. SOS redesign xong (panel swipe-up, green button, blockchain SOS log). Tất cả Workers deployed.
 
 ### Việc cần làm tiếp theo
 
 **Bước 7 – Polish & Monetization**
-- [ ] Build APK debug thành công trên device thật (Samsung)
-- [ ] AdMob interstitial sau khi kết thúc chuyến
+- [ ] AdMob interstitial sau khi kết thúc chuyến (driver trip.tsx + customer rating.tsx)
 - [ ] Build APK production (EAS reset 01/06/2026)
 - [ ] iOS build (chờ Apple Developer account)
 
@@ -355,13 +362,24 @@ db.collection("drivers")
 
 **Ví tài xế:** custodial, mọi giao dịch do Worker ký. Tài xế không cần biết XLM/blockchain.
 
-**Stellar Memo – 27 bytes:**
+**Stellar Memo – Trip (27 bytes):**
 ```
-[0-4]  SĐT tài xế  – BCD (5 bytes)
-[5-9]  SĐT khách   – BCD (5 bytes)
+[0-4]   SĐT tài xế  – BCD (5 bytes)
+[5-9]   SĐT khách   – BCD (5 bytes)
 [10-17] Geohash đón – ASCII 8 ký tự (±19m)
 [18-25] Geohash đến – ASCII 8 ký tự
-[26]   Rating      – 1 byte (1-5)
+[26]    Rating      – 1 byte (1-5)
+```
+
+**Stellar Memo – SOS (32 bytes):**
+```
+[0-4]   SĐT tài xế  – BCD (5 bytes)
+[5-9]   SĐT khách   – BCD (5 bytes)
+[10-13] Latitude × 1,000,000 – int32 big-endian
+[14-17] Longitude × 1,000,000 – int32 big-endian
+[18-27] Biển số xe – ASCII null-terminated, tối đa 10 ký tự
+[28]    Người kích hoạt – 0x01 = tài xế, 0x02 = khách
+[29-31] Dự phòng – zeros
 ```
 
 ---
