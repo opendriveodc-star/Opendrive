@@ -75,22 +75,24 @@ export function encodeMemo(
   return btoa(binary)
 }
 
-// Encode 27-byte SOS memo
-// [0-4]   SĐT tài xế  – BCD 5 bytes
-// [5-9]   SĐT khách   – BCD 5 bytes
+// Encode 32-byte SOS memo (đúng kích thước Stellar hash memo)
+// [0-4]   SĐT tài xế   – BCD 5 bytes
+// [5-9]   SĐT khách    – BCD 5 bytes
 // [10-13] Latitude  × 1,000,000 → int32 big-endian (±0.1m)
 // [14-17] Longitude × 1,000,000 → int32 big-endian (±0.1m)
-// [18-25] Dự phòng – zeros
-// [26]    Người kích hoạt – 0x01 = tài xế, 0x02 = khách
+// [18-27] Biển số xe  – ASCII null-terminated, tối đa 10 ký tự
+// [28]    Người kích hoạt – 0x01 = tài xế, 0x02 = khách
+// [29-31] Dự phòng – zeros
 // Timestamp không cần encode – blockchain tự ghi thời gian ledger
 export function encodeSosMemo(
   driverPhone:   string,
   customerPhone: string,
   lat:           number,
   lng:           number,
+  licensePlate:  string,
   triggeredBy:   'driver' | 'customer',
 ): string {
-  const buf = new Uint8Array(27)
+  const buf = new Uint8Array(32)
 
   const encodeBCD = (phone: string, offset: number) => {
     const digits = phone.replace(/\D/g, '').padStart(10, '0').slice(-10)
@@ -103,7 +105,7 @@ export function encodeSosMemo(
   encodeBCD(customerPhone, 5)
 
   const encodeInt32 = (val: number, offset: number) => {
-    const v = Math.round(val * 1_000_000) | 0   // int32
+    const v = Math.round(val * 1_000_000) | 0
     buf[offset]     = (v >>> 24) & 0xff
     buf[offset + 1] = (v >>> 16) & 0xff
     buf[offset + 2] = (v >>>  8) & 0xff
@@ -113,7 +115,11 @@ export function encodeSosMemo(
   encodeInt32(lat, 10)
   encodeInt32(lng, 14)
 
-  buf[26] = triggeredBy === 'driver' ? 0x01 : 0x02
+  // Biển số tối đa 10 ký tự ASCII, null-padded
+  const plate = licensePlate.replace(/\s/g, '').slice(0, 10)
+  for (let i = 0; i < plate.length; i++) buf[18 + i] = plate.charCodeAt(i)
+
+  buf[28] = triggeredBy === 'driver' ? 0x01 : 0x02
 
   let binary = ''
   for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i])

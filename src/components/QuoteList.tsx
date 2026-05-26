@@ -39,10 +39,9 @@ function QuoteItem({ quote, onSelect, onPreview }: {
             <Ionicons name="star" size={12} color="#F59E0B" />
             <Text style={styles.meta}> {quote.rating.toFixed(1)} · {quote.ratingCount} {t('trip.trips')}</Text>
           </View>
-          <Text style={styles.meta} numberOfLines={1}>{quote.vehicleBrand} · {quote.licensePlate}</Text>
-          {quote.vehicleColor ? (
-            <Text style={styles.meta} numberOfLines={1}>{quote.vehicleColor}</Text>
-          ) : null}
+          <Text style={styles.meta} numberOfLines={1}>
+            {[quote.vehicleBrand, quote.licensePlate, quote.vehicleColor].filter(Boolean).join(' · ')}
+          </Text>
         </View>
 
         {/* Price + Chọn */}

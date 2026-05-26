@@ -2,8 +2,8 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  View, Text, TouchableOpacity, StyleSheet, Linking,
-  ActivityIndicator, StatusBar, LayoutChangeEvent,
+  View, Text, TouchableOpacity, StyleSheet, Linking, Animated, PanResponder,
+  ActivityIndicator, StatusBar,
 } from 'react-native'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -20,15 +20,15 @@ import { updateDriverStatus, setDriverPendingTrip, incrementCustomerPenalty } fr
 import { encodeMemo, encodeSosMemo } from '../../src/services/odc'
 import SosButton from '../../src/components/SosButton'
 import { rtdb } from '../../src/services/firebase'
-import { maskPhone } from '../../src/utils/format'
 import { distanceKm } from '../../src/services/location'
 import { LOCATION } from '../../src/constants'
 import type {
   PendingTrip, DriverInfo, RatingValue, TripRealtimeInfo,
 } from '../../src/types'
 
-const BRAND        = '#1A2E5E'
-const BRAND_LIGHT  = '#E8EDF6'
+const BRAND          = '#1A2E5E'
+const BRAND_LIGHT    = '#E8EDF6'
+const SOS_SECTION_H  = 220
 
 export default function TripScreen() {
   const { t }    = useTranslation()
@@ -50,7 +50,6 @@ export default function TripScreen() {
   const [distToPickup,     setDistToPickup]     = useState<number | null>(null)
   const [nearDropoff,      setNearDropoff]      = useState(false)
   const [distToDropoff,    setDistToDropoff]    = useState<number | null>(null)
-  const [panelH,           setPanelH]           = useState(260)
   const [sosSent,          setSosSent]          = useState(false)
 
   const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -67,6 +66,25 @@ export default function TripScreen() {
   const navNotifIdRef       = useRef<string | null>(null)
   const customerFcmTokenRef = useRef<string>('')
   const cancelledHandledRef = useRef(false)
+
+  const panelAnim        = useRef(new Animated.Value(SOS_SECTION_H)).current
+  const panelLevelRef    = useRef(0)
+  const panStartValRef   = useRef(SOS_SECTION_H)
+  const panResponder     = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: ()        => true,
+    onMoveShouldSetPanResponder:  (_, gs)   => Math.abs(gs.dy) > 4,
+    onPanResponderGrant: () => {
+      panStartValRef.current = panelLevelRef.current === 1 ? 0 : SOS_SECTION_H
+    },
+    onPanResponderMove: (_, gs) => {
+      panelAnim.setValue(Math.max(0, Math.min(SOS_SECTION_H, panStartValRef.current + gs.dy)))
+    },
+    onPanResponderRelease: (_, gs) => {
+      const expand = panelLevelRef.current === 1 ? gs.dy <= 30 : gs.dy <= -30
+      panelLevelRef.current = expand ? 1 : 0
+      Animated.spring(panelAnim, { toValue: expand ? 0 : SOS_SECTION_H, useNativeDriver: true, bounciness: 4 }).start()
+    },
+  })).current
 
   useEffect(() => {
     async function load() {
@@ -105,7 +123,7 @@ export default function TripScreen() {
               const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
               const dist = distanceKm(loc.coords.latitude, loc.coords.longitude, trip.pickupLat!, trip.pickupLng!)
               setDistToPickup(dist)
-              if (dist <= 0.1) {
+              if (dist <= 0.15) {
                 setNearPickup(true)
                 dismissNavNotif()
                 if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
@@ -162,6 +180,7 @@ export default function TripScreen() {
       driverName:     driverInfo.name,
       driverPhone:    driverInfo.phone,
       vehicleBrand:   driverInfo.vehicleBrand,
+      vehicleColor:   driverInfo.vehicleColor ?? '',
       licensePlate:   driverInfo.licensePlate,
       driverFcmToken: driverInfo.fcmToken ?? '',
     }).catch(() => {})
@@ -200,7 +219,7 @@ export default function TripScreen() {
       const lng  = loc.coords.longitude
       const drv  = driverInfoRef.current
       const trip = pendingTripRef.current
-      const memo27bytes = encodeSosMemo(drv.phone, trip.customerPhone, lat, lng, 'driver')
+      const memo27bytes = encodeSosMemo(drv.phone, trip.customerPhone, lat, lng, drv.licensePlate ?? '', 'driver')
       sosAlert({ driverPhone: drv.phone, customerPhone: trip.customerPhone, lat, lng, triggeredBy: 'driver', memo27bytes }).catch(() => {})
     } catch {}
   }
@@ -291,7 +310,7 @@ export default function TripScreen() {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
         const dist = distanceKm(loc.coords.latitude, loc.coords.longitude, dLat, dLng)
         setDistToDropoff(dist)
-        if (dist <= 0.1) {
+        if (dist <= 0.15) {
           setNearDropoff(true)
           dismissNavNotif()
           if (proximityRef.current) { clearInterval(proximityRef.current); proximityRef.current = null }
@@ -450,29 +469,19 @@ export default function TripScreen() {
       {/* Header overlay */}
       <SafeAreaView style={styles.headerOverlay} edges={['top']} pointerEvents="box-none">
         <View style={styles.headerRow}>
-          <View style={[styles.statusPill, { backgroundColor: pickedUp ? BRAND : '#F59E0B' }]}>
-            <Ionicons name={pickedUp ? 'car-outline' : 'navigate-outline'} size={14} color="#fff" />
-            <Text style={styles.statusPillText}>
-              {pickedUp ? t('trip.inProgress') : t('trip.driverComing')}
-            </Text>
-          </View>
           <TouchableOpacity style={styles.abandonBtn} onPress={handleAbandon} activeOpacity={0.8}>
             <Text style={styles.abandonBtnText}>{t('trip.abandonTrip')}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
 
-      {/* SOS Button – floating bên phải, phía trên panel */}
-      <View style={[styles.sosWrapper, { bottom: panelH + 12 }]} pointerEvents="box-none">
-        <SosButton onTriggered={handleSOS} disabled={sosSent} />
-      </View>
-
-      {/* Bottom panel */}
-      <View
-        style={[styles.panel, { paddingBottom: Math.max(insets.bottom, 16) }]}
-        onLayout={(e: LayoutChangeEvent) => setPanelH(e.nativeEvent.layout.height)}
+      {/* Bottom panel — swipe handle up to reveal SOS section */}
+      <Animated.View
+        style={[styles.panel, { transform: [{ translateY: panelAnim }], paddingBottom: Math.max(insets.bottom, 16) }]}
       >
-        <View style={styles.handle} />
+        <View {...panResponder.panHandlers} style={styles.handleArea}>
+          <View style={styles.handle} />
+        </View>
 
         {/* Price + SĐT khách (bấm để gọi) */}
         <View style={styles.priceRow}>
@@ -486,7 +495,7 @@ export default function TripScreen() {
             activeOpacity={0.75}
           >
             <Ionicons name="call-outline" size={13} color={BRAND} />
-            <Text style={styles.customerChipText}>{maskPhone(pendingTrip.customerPhone)}</Text>
+            <Text style={styles.customerChipText}>{`***${pendingTrip.customerPhone.slice(-3)}`}</Text>
           </TouchableOpacity>
         </View>
 
@@ -539,7 +548,7 @@ export default function TripScreen() {
                 onPress={() => showAlert(
                   '📍 Chưa đến điểm đón',
                   distToPickup !== null
-                    ? `Bạn còn cách điểm đón ${distToPickup < 1 ? Math.round(distToPickup * 1000) + ' m' : distToPickup.toFixed(1) + ' km'}.\n\nNút sẽ mở khóa khi bạn đến trong vòng 100m.`
+                    ? `Bạn còn cách điểm đón ${distToPickup < 1 ? Math.round(distToPickup * 1000) + ' m' : distToPickup.toFixed(1) + ' km'}.\n\nNút sẽ mở khóa khi bạn đến trong vòng 150m.`
                     : 'Đang xác định vị trí, vui lòng chờ...',
                 )}
               >
@@ -566,7 +575,7 @@ export default function TripScreen() {
               onPress={() => showAlert(
                 '📍 Chưa đến điểm đến',
                 distToDropoff !== null
-                  ? `Bạn còn cách điểm đến ${distToDropoff < 1 ? Math.round(distToDropoff * 1000) + ' m' : distToDropoff.toFixed(1) + ' km'}.\n\nApp sẽ tự mở khóa nút hoàn thành khi bạn đến trong vòng 100m — hãy di chuyển đến điểm đến trước nhé!`
+                  ? `Bạn còn cách điểm đến ${distToDropoff < 1 ? Math.round(distToDropoff * 1000) + ' m' : distToDropoff.toFixed(1) + ' km'}.\n\nApp sẽ tự mở khóa nút hoàn thành khi bạn đến trong vòng 150m — hãy di chuyển đến điểm đến trước nhé!`
                   : 'Đang xác định vị trí của bạn, vui lòng chờ trong giây lát...',
               )}
             >
@@ -582,14 +591,19 @@ export default function TripScreen() {
             </TouchableOpacity>
           )}
         </View>
-      </View>
+
+        {/* SOS section — hidden below screen by default, revealed on swipe-up */}
+        <View style={styles.sosDivider} />
+        <View style={styles.sosSection}>
+          <SosButton onTriggered={handleSOS} disabled={sosSent} />
+        </View>
+      </Animated.View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   root:       { flex: 1, backgroundColor: '#E8EDF6' },
-  sosWrapper: { position: 'absolute', right: 16, zIndex: 30 },
   fullCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC', gap: 16 },
   waitText:   { fontSize: 15, color: '#64748B', fontWeight: '600', textAlign: 'center' },
 
@@ -622,7 +636,10 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.10, shadowRadius: 16, elevation: 20,
   },
-  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0', alignSelf: 'center', marginBottom: 16 },
+  handleArea:  { alignItems: 'center', paddingTop: 4, paddingBottom: 8, marginBottom: 8 },
+  handle:      { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0' },
+  sosDivider:  { height: 1, backgroundColor: '#E2E8F0', marginHorizontal: -20, marginTop: 8 },
+  sosSection:  { alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
 
   priceRow: {
     flexDirection: 'row', alignItems: 'center',

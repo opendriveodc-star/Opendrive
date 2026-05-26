@@ -267,7 +267,10 @@ export default function DriverInfoScreen() {
                     <Ionicons name="person" size={11} color={active ? 'rgba(255,255,255,0.85)' : '#64748B'} />
                   </View>
                 ) : (
-                  <Text style={[s.vehicleBtnSpec, active && s.vehicleBtnSpecActive]}>{t(specKey)}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                    <Ionicons name="cube-outline" size={11} color={active ? '#fff' : BRAND} style={{ opacity: active ? 0.8 : 0.55 }} />
+                    <Text style={[s.vehicleBtnSpec, active && s.vehicleBtnSpecActive]}>{t(specKey)}</Text>
+                  </View>
                 )}
               </TouchableOpacity>
             )
@@ -374,7 +377,7 @@ const s = StyleSheet.create({
   vehicleBtnActive: { backgroundColor: BRAND, borderColor: BRAND },
   vehicleBtnText:   { fontSize: 14, fontWeight: '700', color: BRAND, textAlign: 'center' },
   vehicleBtnTextActive: { color: '#fff' },
-  vehicleBtnSpec:   { fontSize: 11, color: BRAND, opacity: 0.55, textAlign: 'center' },
+  vehicleBtnSpec:   { fontSize: 11, fontWeight: '700', color: BRAND, opacity: 0.55, textAlign: 'center' },
   vehicleBtnSpecActive: { color: '#fff', opacity: 0.8 },
   iconWrap: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   passengerRow: { flexDirection: 'row', gap: 3, alignItems: 'center', justifyContent: 'center' },

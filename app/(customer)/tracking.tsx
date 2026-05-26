@@ -1,9 +1,9 @@
 // app/(customer)/tracking.tsx
 
 import React, { useEffect, useState, useRef } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, LayoutChangeEvent } from 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet, Animated, PanResponder, Linking } from 'react-native'
 import { showAlert } from '../../src/components/GlobalAlert'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { Ionicons } from '@expo/vector-icons'
@@ -24,30 +24,32 @@ import type { CustomerInfo, TripRealtimeInfo } from '../../src/types'
 const RETRY_TRIP_KEY = 'retry_trip_data'
 const LOCK_72H = 72 * 60 * 60 * 1000
 
-const BRAND = '#1A2E5E'
+const BRAND         = '#1A2E5E'
+const SOS_SECTION_H = 220
 
 type TripStatus = 'going_to_pickup' | 'picked_up' | 'completed'
 
-const STATUS_CONFIG: Record<TripStatus, { label: string; color: string; icon: string }> = {
-  going_to_pickup: { label: 'trip.driverComing',  color: '#F59E0B', icon: 'navigate-outline' },
-  picked_up:       { label: 'trip.inProgress',    color: BRAND,     icon: 'car-outline'      },
-  completed:       { label: 'trip.completed',      color: '#10B981', icon: 'checkmark-circle-outline' },
+const STATUS_CONFIG: Record<TripStatus, { label: string; icon: string }> = {
+  going_to_pickup: { label: 'trip.driverComing', icon: 'navigate-outline'         },
+  picked_up:       { label: 'trip.inProgress',   icon: 'car-outline'              },
+  completed:       { label: 'trip.completed',     icon: 'checkmark-circle-outline' },
 }
 
 export default function TrackingScreen() {
-  const { t } = useTranslation()
+  const { t }      = useTranslation()
+  const insets     = useSafeAreaInsets()
   const { tripId } = useLocalSearchParams<{ tripId: string }>()
 
   const [driverLat,  setDriverLat]  = useState<number>(10.7769)
   const [driverLng,  setDriverLng]  = useState<number>(106.7009)
   const [tripStatus, setTripStatus] = useState<TripStatus>('going_to_pickup')
-  const [driverInfo, setDriverInfo] = useState<{ name: string; licensePlate: string; vehicleBrand: string } | null>(null)
-  const [canCancel,  setCanCancel]  = useState(true)
-  const [panelH,     setPanelH]     = useState(180)
-  const [sosSent,    setSosSent]    = useState(false)
+  const [driverInfo, setDriverInfo] = useState<{ name: string; licensePlate: string; vehicleBrand: string; vehicleColor: string } | null>(null)
+  const [canCancel,    setCanCancel]    = useState(true)
+  const [sosSent,      setSosSent]      = useState(false)
+  const [driverPhone,  setDriverPhone]  = useState<string>('')
 
-  const driverPhoneRef    = useRef<string>('')
-  const customerPhoneRef  = useRef<string>('')
+  const driverPhoneRef   = useRef<string>('')
+  const customerPhoneRef = useRef<string>('')
 
   const startedAtRef       = useRef<number>(Date.now())
   const mapRef             = useRef<MapViewHandle>(null)
@@ -55,11 +57,31 @@ export default function TrackingScreen() {
   const pickupLatRef       = useRef<number | null>(null)
   const pickupLngRef       = useRef<number | null>(null)
   const tripInfoRef        = useRef<TripRealtimeInfo | null>(null)
-  const driverInfoRef      = useRef<{ name: string; licensePlate: string; vehicleBrand: string } | null>(null)
+  const driverInfoRef      = useRef<{ name: string; licensePlate: string; vehicleBrand: string; vehicleColor: string } | null>(null)
   const driverArrivedRef   = useRef(false)
   const arrivedNotifIdRef  = useRef<string | null>(null)
   const driverFcmTokenRef  = useRef<string>('')
   const cancelledHandledRef = useRef(false)
+
+  const panelAnim       = useRef(new Animated.Value(SOS_SECTION_H)).current
+  const panelLevelRef   = useRef(0)
+  const panStartValRef  = useRef(SOS_SECTION_H)
+  const panResponder    = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: ()       => true,
+    onMoveShouldSetPanResponder:  (_, gs)  => Math.abs(gs.dy) > 4,
+    onPanResponderGrant: () => {
+      panStartValRef.current = panelLevelRef.current === 1 ? 0 : SOS_SECTION_H
+    },
+    onPanResponderMove: (_, gs) => {
+      panelAnim.setValue(Math.max(0, Math.min(SOS_SECTION_H, panStartValRef.current + gs.dy)))
+    },
+    onPanResponderRelease: (_, gs) => {
+      const expand = panelLevelRef.current === 1 ? gs.dy <= 30 : gs.dy <= -30
+      panelLevelRef.current = expand ? 1 : 0
+      Animated.spring(panelAnim, { toValue: expand ? 0 : SOS_SECTION_H, useNativeDriver: true, bounciness: 4 }).start()
+    },
+  })).current
+
   const locationPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
   const statusPollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const infoPollRef        = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -75,10 +97,7 @@ export default function TrackingScreen() {
       if (info.pickupLng) pickupLngRef.current = info.pickupLng
     }).catch(() => {})
 
-    // Load driverPhone từ trip_info và customerPhone từ SecureStore
-    rtdb.get<{ driverPhone?: string }>(`trips/${tripId}/trip_info`).then(info => {
-      if (info?.driverPhone) driverPhoneRef.current = info.driverPhone
-    }).catch(() => {})
+    // Load customerPhone từ SecureStore
     SecureStore.getItemAsync(SecureStoreKey.CUSTOMER_INFO).then(raw => {
       if (!raw) return
       try { customerPhoneRef.current = (JSON.parse(raw) as CustomerInfo).phone } catch {}
@@ -129,19 +148,21 @@ export default function TrackingScreen() {
     const tryGetTripInfo = async () => {
       try {
         const info = await rtdb.get<{
-          driverName: string; licensePlate: string; vehicleBrand: string; driverFcmToken?: string
+          driverName: string; licensePlate: string; vehicleBrand: string
+          vehicleColor?: string; driverPhone?: string; driverFcmToken?: string
         }>(`trips/${tripId}/trip_info`)
         if (info?.driverName) {
-          const di = { name: info.driverName, licensePlate: info.licensePlate, vehicleBrand: info.vehicleBrand }
+          const di = { name: info.driverName, licensePlate: info.licensePlate, vehicleBrand: info.vehicleBrand, vehicleColor: info.vehicleColor ?? '' }
           setDriverInfo(di)
           driverInfoRef.current = di
+          if (info.driverPhone) { setDriverPhone(info.driverPhone); driverPhoneRef.current = info.driverPhone }
           if (info.driverFcmToken) driverFcmTokenRef.current = info.driverFcmToken
           if (infoPollRef.current) { clearInterval(infoPollRef.current); infoPollRef.current = null }
         }
       } catch {}
     }
     tryGetTripInfo()
-    infoPollRef.current = setInterval(tryGetTripInfo, 5000)
+    infoPollRef.current = setInterval(tryGetTripInfo, 3000)
 
     // Poll phát hiện tài xế đã đến điểm đón
     arrivedPollRef.current = setInterval(async () => {
@@ -243,7 +264,7 @@ export default function TrackingScreen() {
     })
   }
 
-  // Khi đã lên xe, kiểm tra vị trí khách mỗi 5s – hiện bảng đánh giá khi còn ≤100m đến điểm đến
+  // Khi đã lên xe, kiểm tra vị trí khách mỗi 5s – hiện bảng đánh giá khi còn ≤150m đến điểm đến
   useEffect(() => {
     if (tripStatus !== 'picked_up') return
 
@@ -255,7 +276,7 @@ export default function TrackingScreen() {
       try {
         const loc  = await getCurrentLocation()
         const dist = distanceKm(loc.lat, loc.lng, dropLat, dropLng)
-        if (dist <= 0.1) {
+        if (dist <= 0.15) {
           clearInterval(check)
           navigateToRating()
         }
@@ -274,7 +295,8 @@ export default function TrackingScreen() {
       const lng    = loc.lng
       const dPhone = driverPhoneRef.current
       const cPhone = customerPhoneRef.current
-      const memo27bytes = encodeSosMemo(dPhone, cPhone, lat, lng, 'customer')
+      const plate       = driverInfoRef.current?.licensePlate ?? ''
+      const memo27bytes = encodeSosMemo(dPhone, cPhone, lat, lng, plate, 'customer')
       sosAlert({ driverPhone: dPhone, customerPhone: cPhone, lat, lng, triggeredBy: 'customer', memo27bytes }).catch(() => {})
     } catch {}
   }
@@ -290,6 +312,22 @@ export default function TrackingScreen() {
           // Notify tài xế qua FCM
           if (tripId && driverFcmTokenRef.current) {
             notifyCancel(tripId, 'customer', driverFcmTokenRef.current).catch(() => {})
+          }
+
+          // Lưu dữ liệu chuyến để khôi phục ở bước chọn điểm đón
+          const info = tripInfoRef.current
+          if (info) {
+            await AsyncStorage.setItem(RETRY_TRIP_KEY, JSON.stringify({
+              vehicleType:   info.vehicleType,
+              pickupLat:     info.pickupLat,
+              pickupLng:     info.pickupLng,
+              pickupAddress: info.pickupAddress ?? '',
+              dropLat:       info.dropLat,
+              dropLng:       info.dropLng,
+              destAddress:   info.destAddress ?? '',
+              note:          info.note ?? '',
+              estimatedKm:   info.estimatedKm,
+            })).catch(() => {})
           }
 
           // Tính penalty
@@ -335,20 +373,18 @@ export default function TrackingScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.mapContainer}>
+      {/* Map full screen */}
+      <View style={{ ...StyleSheet.absoluteFillObject }}>
         <MapView ref={mapRef} lat={driverLat} lng={driverLng} />
-        {/* SOS Button – floating bên phải, phía trên panel */}
-        <View style={[styles.sosWrapper, { bottom: panelH + 12 }]} pointerEvents="box-none">
-          <SosButton onTriggered={handleSOS} disabled={sosSent} />
-        </View>
       </View>
 
-      <SafeAreaView
-        style={styles.panel}
-        edges={['bottom']}
-        onLayout={(e: LayoutChangeEvent) => setPanelH(e.nativeEvent.layout.height)}
+      {/* Bottom panel — swipe handle up to reveal SOS section */}
+      <Animated.View
+        style={[styles.panel, { transform: [{ translateY: panelAnim }], paddingBottom: Math.max(insets.bottom, 16) }]}
       >
-        <View style={styles.handle} />
+        <View {...panResponder.panHandlers} style={styles.handleArea}>
+          <View style={styles.handle} />
+        </View>
 
         {driverInfo ? (
           <View style={styles.driverRow}>
@@ -357,8 +393,20 @@ export default function TrackingScreen() {
             </View>
             <View style={styles.driverInfo}>
               <Text style={styles.driverName} numberOfLines={1}>{driverInfo.name}</Text>
-              <Text style={styles.driverMeta}>{driverInfo.vehicleBrand} · {driverInfo.licensePlate}</Text>
+              <Text style={styles.driverMeta} numberOfLines={1}>
+                {[driverInfo.vehicleBrand, driverInfo.licensePlate, driverInfo.vehicleColor].filter(Boolean).join(' · ')}
+              </Text>
             </View>
+            <TouchableOpacity
+              style={[styles.callChip, !driverPhone && styles.callChipDisabled]}
+              onPress={() => driverPhone && Linking.openURL(`tel:${driverPhone}`)}
+              activeOpacity={driverPhone ? 0.75 : 1}
+            >
+              <Ionicons name="call-outline" size={13} color={driverPhone ? BRAND : '#94A3B8'} />
+              <Text style={[styles.callChipText, !driverPhone && styles.callChipTextDisabled]}>
+                {driverPhone ? `***${driverPhone.slice(-3)}` : '···'}
+              </Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.driverRow}>
@@ -374,9 +422,9 @@ export default function TrackingScreen() {
         <View style={styles.divider} />
 
         <View style={styles.statusRow}>
-          <View style={[styles.statusDot, { backgroundColor: statusCfg.color }]} />
-          <Ionicons name={statusCfg.icon as any} size={16} color={statusCfg.color} style={{ marginRight: 6 }} />
-          <Text style={[styles.statusText, { color: statusCfg.color }]}>{t(statusCfg.label)}</Text>
+          <View style={styles.statusDot} />
+          <Ionicons name={statusCfg.icon as any} size={16} color={BRAND} style={{ marginRight: 6 }} />
+          <Text style={styles.statusText}>{t(statusCfg.label)}</Text>
         </View>
 
         {(tripStatus === 'picked_up' || (canCancel && tripStatus === 'going_to_pickup')) && (
@@ -385,31 +433,43 @@ export default function TrackingScreen() {
             <Text style={styles.cancelText}>{t('cancel.title')}</Text>
           </TouchableOpacity>
         )}
-      </SafeAreaView>
+
+        {/* SOS section — hidden below screen by default, revealed on swipe-up */}
+        <View style={styles.sosDivider} />
+        <View style={styles.sosSection}>
+          <SosButton onTriggered={handleSOS} disabled={sosSent} />
+        </View>
+      </Animated.View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container:    { flex: 1, backgroundColor: '#fff' },
-  mapContainer: { flex: 1, position: 'relative' },
-  sosWrapper:   { position: 'absolute', right: 16, zIndex: 30 },
+  container: { flex: 1 },
   panel: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8,
-    elevation: 12, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 16, shadowOffset: { width: 0, height: -4 },
+    paddingHorizontal: 20, paddingTop: 12,
+    elevation: 20, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 16, shadowOffset: { width: 0, height: -4 },
   },
-  handle:     { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0', alignSelf: 'center', marginBottom: 16 },
-  driverRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  handleArea:  { alignItems: 'center', paddingTop: 4, paddingBottom: 8, marginBottom: 8 },
+  handle:      { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0' },
+  sosDivider:  { height: 1, backgroundColor: '#E2E8F0', marginHorizontal: -20, marginTop: 8 },
+  sosSection:  { alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
+  driverRow:           { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 10 },
+  callChip:            { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0, backgroundColor: '#E8EDF6', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 20 },
+  callChipDisabled:    { backgroundColor: '#F1F5F9' },
+  callChipText:        { fontSize: 13, fontWeight: '600', color: BRAND },
+  callChipTextDisabled:{ color: '#94A3B8' },
   avatar:     { width: 48, height: 48, borderRadius: 24, backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   avatarText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   driverInfo: { flex: 1 },
   driverName: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
   driverMeta: { fontSize: 13, color: '#64748B', marginTop: 2 },
   divider:    { height: 1, backgroundColor: '#F1F5F9', marginBottom: 12 },
-  statusRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
-  statusDot:  { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  statusText: { fontSize: 14, fontWeight: '600' },
+  statusRow:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  statusDot:  { width: 8, height: 8, borderRadius: 4, marginRight: 6, backgroundColor: BRAND },
+  statusText: { fontSize: 14, fontWeight: '600', color: BRAND },
   cancelBtn:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: '#DC2626', borderRadius: 12, paddingVertical: 12, marginBottom: 4 },
   cancelText: { color: '#DC2626', fontWeight: '600', fontSize: 15 },
 })

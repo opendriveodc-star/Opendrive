@@ -96,11 +96,12 @@ export default function CustomerHomeScreen() {
   const [countdown,        setCountdown]        = useState(25)
   const [sheetLevel,       setSheetLevel]       = useState<0|1|2>(1)
 
-  const mapRef       = useRef<MapViewHandle>(null)
-  const panelX       = useRef(new Animated.Value(0)).current
-  const sheetY       = useRef(new Animated.Value(SNAP_Y[1])).current
-  const isAnimating  = useRef(false)
-  const stepRef      = useRef<Step>(0)
+  const mapRef         = useRef<MapViewHandle>(null)
+  const panelX         = useRef(new Animated.Value(0)).current
+  const sheetY         = useRef(new Animated.Value(SNAP_Y[1])).current
+  const isAnimating    = useRef(false)
+  const stepRef        = useRef<Step>(0)
+  const retryPickupRef = useRef<{ lat: number; lng: number } | null>(null)
   const sheetLvlRef  = useRef<0|1|2>(1)
   const progPan      = useRef(false)
   const mapCenter    = useRef<{ lat: number; lng: number }>({ lat: INIT_LAT, lng: INIT_LNG })
@@ -178,14 +179,17 @@ export default function CustomerHomeScreen() {
     onMoveShouldSetPanResponder: (_, g) =>
       Math.abs(g.dy) > 4 && Math.abs(g.dy) > Math.abs(g.dx),
     onPanResponderMove: (_, g) => {
+      const maxLvl = stepRef.current === 4 ? 2 : 1
       const base = SNAP_Y[sheetLvlRef.current]
-      const next = Math.max(SNAP_Y[2], Math.min(SNAP_Y[0], base + g.dy))
+      const next = Math.max(SNAP_Y[maxLvl], Math.min(SNAP_Y[0], base + g.dy))
       sheetY.setValue(next)
     },
     onPanResponderRelease: (_, g) => {
+      const maxLvl = stepRef.current === 4 ? 2 : 1
       const base   = SNAP_Y[sheetLvlRef.current]
       const projY  = base + g.dy + g.vy * 120
-      const dists  = ([0, 1, 2] as const).map(l => ({ l, d: Math.abs(SNAP_Y[l] - projY) }))
+      const lvls   = maxLvl === 1 ? ([0, 1] as const) : ([0, 1, 2] as const)
+      const dists  = lvls.map(l => ({ l, d: Math.abs(SNAP_Y[l] - projY) }))
       const target = dists.reduce((a, b) => a.d < b.d ? a : b).l
       snapToLevel(target)
     },
@@ -201,6 +205,13 @@ export default function CustomerHomeScreen() {
   }
 
   async function fetchCurrentLocation() {
+    // Khi khôi phục dữ liệu chuyến bị hủy, hiển thị bản đồ tại điểm đón đã lưu
+    if (retryPickupRef.current) {
+      const { lat, lng } = retryPickupRef.current
+      retryPickupRef.current = null
+      panTo(lat, lng)
+      return
+    }
     try {
       const loc     = await getCurrentLocation()
       mapCenter.current = { lat: loc.lat, lng: loc.lng }
@@ -279,6 +290,7 @@ export default function CustomerHomeScreen() {
       if (d.pickupLat && d.pickupAddress) {
         setPickup({ lat: d.pickupLat, lng: d.pickupLng, address: d.pickupAddress })
         setPickupText(d.pickupAddress)
+        retryPickupRef.current = { lat: d.pickupLat, lng: d.pickupLng }
       }
       if (d.dropLat && d.destAddress) {
         setDest({ lat: d.dropLat, lng: d.dropLng, address: d.destAddress })
@@ -286,7 +298,7 @@ export default function CustomerHomeScreen() {
       }
       if (d.note) setNote(d.note)
       if (d.estimatedKm) setDistKm(d.estimatedKm)
-      setTimeout(() => goToStep(3), 300)
+      setTimeout(() => goToStep(1), 300)
     } catch {}
   }
 
@@ -484,7 +496,6 @@ export default function CustomerHomeScreen() {
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
-  const locateBtnBottom = PARTIAL_H + 16
 
   return (
     <View style={styles.root}>
@@ -534,7 +545,7 @@ export default function CustomerHomeScreen() {
       {/* Locate button – only for pickup/dest steps */}
       {(step === 1 || step === 2) && (
         <TouchableOpacity
-          style={[styles.locateBtn, { bottom: locateBtnBottom }]}
+          style={[styles.locateBtn, { top: topBarH + 8 }]}
           onPress={fetchCurrentLocation}
           activeOpacity={0.85}
         >
@@ -747,7 +758,7 @@ function VehiclePanel({ vehicle, transportModel, onVehicleChange, onTransportMod
   return (
     <View style={sub.panelFlex}>
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        <Text style={sub.panelTitle}>{t('trip.selectVehicleTitle')}</Text>
+        <Text style={[sub.panelTitle, { textAlign: 'center' }]}>{t('trip.selectVehicleTitle')}</Text>
 
         <Text style={[sub.sectionLabel, { marginTop: 10 }]}>{t('trip.transportModel')}</Text>
         <View style={sub.transportRow}>
@@ -799,9 +810,10 @@ function VehiclePanel({ vehicle, transportModel, onVehicleChange, onTransportMod
                     <Ionicons name="person" size={11} color={active ? 'rgba(255,255,255,0.85)' : '#64748B'} />
                   </View>
                 ) : (
-                  <Text style={[sub.vehicleCardSpec, active && sub.vehicleCardSpecActive]}>
-                    {t(v.specKey)}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 2 }}>
+                    <Ionicons name="cube-outline" size={11} color={active ? 'rgba(255,255,255,0.75)' : '#64748B'} />
+                    <Text style={[sub.vehicleCardSpec, active && sub.vehicleCardSpecActive]}>{t(v.specKey)}</Text>
+                  </View>
                 )}
               </TouchableOpacity>
             )
@@ -825,7 +837,13 @@ function PickupPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSav
   const showSugg = suggestions.length > 0
   return (
     <View style={sub.panelFlex}>
-      <Text style={sub.panelTitle}>{t('trip.stepPickup')}</Text>
+      <View style={sub.panelHeaderRow}>
+        <TouchableOpacity style={sub.panelBackBtn} onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="chevron-back" size={22} color={BRAND} />
+        </TouchableOpacity>
+        <Text style={sub.panelTitleCenter}>{t('trip.stepPickup')}</Text>
+        <View style={{ width: 36 }} />
+      </View>
       <AddressInput value={text} onChangeText={onChangeText} placeholder={t('trip.pickupPlaceholder')} onBookmark={onSave} />
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {showSugg ? (
@@ -838,12 +856,9 @@ function PickupPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSav
           <SavedChips savedLocs={savedLocs} onSelect={onSelectSaved} onRemove={onRemoveSaved} t={t} />
         )}
       </ScrollView>
-      <TouchableOpacity style={sub.confirmBtn} onPress={onConfirm} activeOpacity={0.85}>
+      <TouchableOpacity style={[sub.confirmBtn, { marginBottom: (insetBottom || 0) + 16 }]} onPress={onConfirm} activeOpacity={0.85}>
         <Text style={sub.confirmBtnText}>{t('trip.confirmPickup')}</Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
-      </TouchableOpacity>
-      <TouchableOpacity style={[sub.backBtnWide, { marginBottom: insetBottom || 4 }]} onPress={onBack} activeOpacity={0.7}>
-        <Text style={sub.backBtnWideText}>{t('common.back')}</Text>
       </TouchableOpacity>
     </View>
   )
@@ -854,7 +869,13 @@ function DestPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSaved
   const showSugg = suggestions.length > 0
   return (
     <View style={sub.panelFlex}>
-      <Text style={sub.panelTitle}>{t('trip.stepDest')}</Text>
+      <View style={sub.panelHeaderRow}>
+        <TouchableOpacity style={sub.panelBackBtn} onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="chevron-back" size={22} color={BRAND} />
+        </TouchableOpacity>
+        <Text style={sub.panelTitleCenter}>{t('trip.stepDest')}</Text>
+        <View style={{ width: 36 }} />
+      </View>
       <AddressInput value={text} onChangeText={onChangeText} placeholder={t('trip.destPlaceholder')} autoFocus onBookmark={onSave} />
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {showSugg ? (
@@ -867,12 +888,9 @@ function DestPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSaved
           <SavedChips savedLocs={savedLocs} onSelect={onSelectSaved} onRemove={onRemoveSaved} t={t} />
         )}
       </ScrollView>
-      <TouchableOpacity style={sub.confirmBtn} onPress={onConfirm} activeOpacity={0.85}>
+      <TouchableOpacity style={[sub.confirmBtn, { marginBottom: (insetBottom || 0) + 16 }]} onPress={onConfirm} activeOpacity={0.85}>
         <Text style={sub.confirmBtnText}>{t('trip.confirmDest')}</Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
-      </TouchableOpacity>
-      <TouchableOpacity style={[sub.backBtnWide, { marginBottom: insetBottom || 4 }]} onPress={onBack} activeOpacity={0.7}>
-        <Text style={sub.backBtnWideText}>{t('common.back')}</Text>
       </TouchableOpacity>
     </View>
   )
@@ -882,8 +900,14 @@ function DestPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSaved
 function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, onBack, insetBottom, t }: any) {
   return (
     <View style={sub.panelFlex}>
+      <View style={sub.panelHeaderRow}>
+        <TouchableOpacity style={sub.panelBackBtn} onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="chevron-back" size={22} color={BRAND} />
+        </TouchableOpacity>
+        <Text style={sub.panelTitleCenter}>{t('trip.bookTitle')}</Text>
+        <View style={{ width: 36 }} />
+      </View>
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        <Text style={sub.panelTitle}>{t('trip.confirmPickup')}</Text>
         <View style={sub.routeSummary}>
           <View style={sub.routeRow}>
             <Ionicons name="location-sharp" size={16} color={BRAND} style={sub.routeIcon} />
@@ -927,7 +951,7 @@ function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, 
       </ScrollView>
 
       <TouchableOpacity
-        style={[sub.confirmBtn, loading && { opacity: 0.7 }]}
+        style={[sub.confirmBtn, { marginBottom: (insetBottom || 0) + 16 }, loading && { opacity: 0.7 }]}
         onPress={onBook}
         disabled={loading}
         activeOpacity={0.85}
@@ -937,9 +961,6 @@ function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, 
           : <><Text style={sub.confirmBtnText}>{t('trip.bookRide')}</Text>
               <Ionicons name="megaphone-outline" size={18} color="#fff" /></>
         }
-      </TouchableOpacity>
-      <TouchableOpacity style={[sub.backBtnWide, { marginBottom: insetBottom || 4 }]} onPress={onBack} activeOpacity={0.7}>
-        <Text style={sub.backBtnWideText}>{t('common.back')}</Text>
       </TouchableOpacity>
     </View>
   )
@@ -1029,9 +1050,9 @@ const styles = StyleSheet.create({
 
   locateBtn: {
     position: 'absolute', right: 16,
-    width: 44, height: 44, borderRadius: 22,
+    width: 36, height: 36, borderRadius: 18,
     backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center',
-    elevation: 6, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8,
+    elevation: 2, shadowColor: BRAND, shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
     zIndex: 20,
   },
 
@@ -1086,9 +1107,10 @@ const sub = StyleSheet.create({
     marginBottom: 12, marginTop: 4,
   },
 
-  panelHeaderRow:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10, marginTop: 0 },
-  panelBackBtn:    { width: 32, height: 32, borderRadius: 16, backgroundColor: '#E8EDF6', justifyContent: 'center', alignItems: 'center' },
-  panelTitleInRow: { flex: 1, fontSize: 16, fontWeight: '700', color: '#0F172A' },
+  panelHeaderRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, marginTop: 4 },
+  panelBackBtn:     { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', shadowColor: BRAND, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 2 },
+  panelTitleCenter: { flex: 1, fontSize: 16, fontWeight: '700', color: '#0F172A', textAlign: 'center' },
+  panelTitleInRow:  { flex: 1, fontSize: 16, fontWeight: '700', color: '#0F172A' },
 
   inputWrap: {
     flexDirection: 'row', alignItems: 'center',
@@ -1137,7 +1159,7 @@ const sub = StyleSheet.create({
   vehicleCardActive:    { backgroundColor: BRAND },
   vehicleCardLabel:     { fontSize: 13, fontWeight: '700', color: BRAND, marginTop: 6, textAlign: 'center' },
   vehicleCardLabelActive: { color: '#fff' },
-  vehicleCardSpec:      { fontSize: 11, color: '#64748B', textAlign: 'center', marginTop: 2 },
+  vehicleCardSpec:      { fontSize: 11, fontWeight: '700', color: '#64748B', textAlign: 'center', marginTop: 2 },
   vehicleCardSpecActive:  { color: 'rgba(255,255,255,0.75)' },
   iconWrap: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   passengerRow: { flexDirection: 'row' as const, gap: 3, alignItems: 'center' as const, justifyContent: 'center' as const, marginTop: 3 },
