@@ -290,8 +290,21 @@ export default function OnlineScreen() {
       await AsyncStorage.setItem(AsyncStorageKey.AUTO_QUOTE_SETTINGS, JSON.stringify(s))
     }
 
-    // Đảm bảo Firestore luôn sync status=ready khi vào màn này
-    updateDriverStatus(info.uid, 'ready').catch(e => console.error('[online] updateDriverStatus failed:', JSON.stringify(e)))
+    // Đảm bảo Firestore luôn sync status=ready — retry 3 lần nếu mạng chậm
+    ;(async () => {
+      for (let i = 0; i < 3; i++) {
+        try {
+          await updateDriverStatus(info.uid, 'ready')
+          await SecureStore.setItemAsync(
+            SecureStoreKey.DRIVER_INFO,
+            JSON.stringify({ ...info, status: 'ready' as DriverStatus }),
+          )
+          return
+        } catch {
+          if (i < 2) await new Promise<void>(r => setTimeout(r, 2000))
+        }
+      }
+    })()
 
     // GPS chính xác trong nền – dùng panTo thay vì setMapInit để tránh re-render
     try {

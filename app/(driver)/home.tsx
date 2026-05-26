@@ -16,7 +16,7 @@ import { updateDriverStatus, updateDriverFcmToken, getDriver, setDriverPendingTr
 import { getCurrentLocation } from '../../src/services/location'
 import { getODCBalance } from '../../src/services/odc'
 import { rtdb } from '../../src/services/firebase'
-import { savePendingTrip, getPendingPenalty, clearPendingPenalty, getEncryptedKey, getDriverInfo, saveDriverInfo } from '../../src/utils/storage'
+import { savePendingTrip, getPendingPenalties, savePendingPenalties, getEncryptedKey, getDriverInfo, saveDriverInfo } from '../../src/utils/storage'
 import { recordTrip } from '../../src/services/cloudflare'
 import NetworkAlert from '../../src/components/NetworkAlert'
 import { SecureStoreKey, DriverInfo, DriverStatus, PendingTrip } from '../../src/types'
@@ -214,20 +214,33 @@ export default function DriverHomeScreen() {
 
   async function processPendingPenalty() {
     try {
-      const pending = await getPendingPenalty()
-      if (!pending) return
+      const list = await getPendingPenalties()
+      if (list.length === 0) return
       const encryptedPrivateKey = await getEncryptedKey()
       if (!encryptedPrivateKey) return
-      await recordTrip({
-        driverUid: pending.driverUid,
-        rating: 1,
-        tripPrice: pending.tripPrice,
-        memo27bytes: pending.memo27Base64,
-        isCancelled: true,
-        encryptedPrivateKey,
-      })
-      await clearPendingPenalty()
-      showAlert('Thông báo', 'Đã trừ ODC do hủy chuyến trước đó.')
+
+      const remaining = [...list]
+      let successCount = 0
+      for (let i = remaining.length - 1; i >= 0; i--) {
+        const p = remaining[i]
+        try {
+          await recordTrip({
+            driverUid: p.driverUid,
+            rating: 1,
+            tripPrice: p.tripPrice,
+            memo27bytes: p.memo27Base64,
+            isCancelled: true,
+            encryptedPrivateKey,
+          })
+          remaining.splice(i, 1)
+          successCount++
+        } catch {}
+      }
+
+      await savePendingPenalties(remaining)
+      if (successCount > 0) {
+        showAlert('Thông báo', `Đã trừ ODC do ${successCount} lần hủy chuyến trước đó.`)
+      }
     } catch {}
   }
 

@@ -14,7 +14,7 @@ import * as Location from 'expo-location'
 import * as Notifications from 'expo-notifications'
 import MapView from '../../src/components/MapView'
 import type { MapViewHandle } from '../../src/components/MapView'
-import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip, saveDriverInfo, savePendingPenalty } from '../../src/utils/storage'
+import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip, saveDriverInfo, savePendingTrip, addPendingPenalty } from '../../src/utils/storage'
 import { recordTrip, notifyCancel, sosAlert } from '../../src/services/cloudflare'
 import { updateDriverStatus, setDriverPendingTrip, incrementCustomerPenalty } from '../../src/services/firestore'
 import { encodeMemo, encodeSosMemo } from '../../src/services/odc'
@@ -51,6 +51,7 @@ export default function TripScreen() {
   const [nearDropoff,      setNearDropoff]      = useState(false)
   const [distToDropoff,    setDistToDropoff]    = useState<number | null>(null)
   const [sosSent,          setSosSent]          = useState(false)
+  const [abandoning,       setAbandoning]       = useState(false)
 
   const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const ratingPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -66,6 +67,7 @@ export default function TripScreen() {
   const navNotifIdRef       = useRef<string | null>(null)
   const customerFcmTokenRef = useRef<string>('')
   const cancelledHandledRef = useRef(false)
+  const abandoningRef       = useRef(false)
 
   const panelAnim        = useRef(new Animated.Value(SOS_SECTION_H)).current
   const panelLevelRef    = useRef(0)
@@ -225,61 +227,74 @@ export default function TripScreen() {
   }
 
   function handleAbandon() {
+    if (abandoningRef.current) return
     showAlert(t('trip.abandonTrip'), t('trip.abandonConfirm'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('trip.abandonTrip'), style: 'destructive',
         onPress: async () => {
-          if (intervalRef.current) clearInterval(intervalRef.current)
+          if (abandoningRef.current) return
+          abandoningRef.current = true
 
-          // Ghi nhận hủy chuyến → trừ phạt ODC 3× baseFee
-          if (pendingTrip && driverInfo) {
-            try {
-              const encryptedPrivateKey = await getEncryptedKey()
-              if (!encryptedPrivateKey) throw new Error('no key')
-              const memo27bytes = encodeMemo(
-                driverInfo.phone, pendingTrip.customerPhone,
-                pendingTrip.pickupGeohash, pendingTrip.dropGeohash, 1,
-              )
-              await recordTrip({
-                driverUid: driverInfo.uid,
-                rating: 1,
-                tripPrice: pendingTrip.tripPrice,
-                memo27bytes,
-                isCancelled: true,
-                encryptedPrivateKey,
+          const trip = pendingTripRef.current
+          const drv  = driverInfoRef.current
+
+          // Lưu cờ cancelling trước tiên — bảo vệ TH app bị kill trong lúc hủy
+          if (trip) await savePendingTrip({ ...trip, cancelling: true }).catch(() => {})
+
+          setAbandoning(true)  // khóa button + hiện spinner
+
+          if (intervalRef.current)        { clearInterval(intervalRef.current);        intervalRef.current = null }
+          if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
+          if (proximityRef.current)       { clearInterval(proximityRef.current);       proximityRef.current = null }
+
+          // [BACKGROUND] Trừ ODC — không block, thất bại thì ghi pendingPenalty → xử lý lần sau
+          if (trip && drv) {
+            getEncryptedKey().then(key => {
+              if (!key) throw new Error('no key')
+              return recordTrip({
+                driverUid: drv.uid, rating: 1, tripPrice: trip.tripPrice,
+                memo27bytes: encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, 1),
+                isCancelled: true, encryptedPrivateKey: key,
               })
-            } catch {
-              // Mạng yếu / Worker fail → lưu lại để xử lý lần đăng nhập sau
-              if (pendingTrip && driverInfo) {
-                const memo27Base64 = encodeMemo(
-                  driverInfo.phone, pendingTrip.customerPhone,
-                  pendingTrip.pickupGeohash, pendingTrip.dropGeohash, 1,
-                )
-                await savePendingPenalty({
-                  driverUid:    driverInfo.uid,
-                  tripPrice:    pendingTrip.tripPrice,
-                  memo27Base64,
-                }).catch(() => {})
+            }).catch(async () => {
+              await addPendingPenalty({
+                driverUid:    drv.uid,
+                tripPrice:    trip.tripPrice,
+                memo27Base64: encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, 1),
+              }).catch(() => {})
+            })
+          }
+
+          // [BACKGROUND] Phạt khách nếu tài xế đã đến điểm đón
+          if (pickedUpRef.current && trip) {
+            incrementCustomerPenalty(trip.customerPhone, 2).catch(() => {})
+          }
+
+          // [BEST-EFFORT] Thông báo khách qua FCM — gửi 1 lần, fail kệ
+          if (trip && customerFcmTokenRef.current && drv) {
+            notifyCancel(trip.tripId, 'driver', customerFcmTokenRef.current, drv.name).catch(() => {})
+          }
+
+          // [BLOCKING] Firestore: status='ready' + pendingTrip=false — retry 3 lần
+          // Phải xong trước khi xóa dữ liệu local và chuyển trang
+          if (drv) {
+            for (let i = 0; i < 3; i++) {
+              try {
+                await Promise.all([
+                  updateDriverStatus(drv.uid, 'ready'),
+                  setDriverPendingTrip(drv.uid, false),
+                ])
+                break
+              } catch {
+                if (i < 2) await new Promise<void>(r => setTimeout(r, 2000))
               }
-              showAlert(
-                'Hệ thống gặp sự cố',
-                'Không thể trừ ODC ngay lúc này. Hệ thống sẽ tự động xử lý vào lần mở app tiếp theo.',
-              )
             }
           }
 
-          // Tài xế hủy sau khi đã đến điểm đón → phạt khách +2
-          if (pickedUpRef.current && pendingTrip) {
-            incrementCustomerPenalty(pendingTrip.customerPhone, 2).catch(() => {})
-          }
-          // Notify khách qua FCM
-          if (pendingTrip && customerFcmTokenRef.current && driverInfo) {
-            notifyCancel(pendingTrip.tripId, 'driver', customerFcmTokenRef.current, driverInfo.name).catch(() => {})
-          }
+          // Xóa dữ liệu local + chuyển trang
           await clearPendingTrip()
-          if (driverInfo) setDriverPendingTrip(driverInfo.uid, false).catch(() => {})
-          if (driverInfo) updateDriverStatus(driverInfo.uid, 'ready').catch(() => {})
+          if (drv) saveDriverInfo({ ...drv, status: 'ready' }).catch(() => {})
           dismissNavNotif()
           router.replace('/(driver)/online')
         },
@@ -326,15 +341,24 @@ export default function TripScreen() {
     }
   }
 
-  async function handleOpenMaps() {
+  function handleOpenMaps() {
     if (!pendingTrip) return
     const lat = pickedUp ? dropLat : pendingTrip.pickupLat
     const lng = pickedUp ? dropLng : pendingTrip.pickupLng
     if (!lat || !lng) return
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`
+    const mode = driverInfoRef.current?.vehicleType === 'motorbike' ? 'l' : 'd'
+    openNavigation(lat, lng, mode)
+  }
+
+  function openNavigation(lat: number, lng: number, mode: 'l' | 'd') {
+    const navUrl = `google.navigation:q=${lat},${lng}&mode=${mode}`
+    const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`
 
     dismissNavNotif()
-    Linking.openURL(url).catch(() => showAlert(t('common.error'), t('error.unknown')))
+    Linking.openURL(navUrl).catch(() =>
+      Linking.openURL(fallbackUrl).catch(() => showAlert(t('common.error'), t('error.unknown')))
+    )
+
     const label = pickedUp ? 'Đang đến điểm đến' : 'Đang đến điểm đón'
     Notifications.scheduleNotificationAsync({
       content: {
@@ -469,11 +493,28 @@ export default function TripScreen() {
       {/* Header overlay */}
       <SafeAreaView style={styles.headerOverlay} edges={['top']} pointerEvents="box-none">
         <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.abandonBtn} onPress={handleAbandon} activeOpacity={0.8}>
-            <Text style={styles.abandonBtnText}>{t('trip.abandonTrip')}</Text>
+          <TouchableOpacity
+            style={[styles.abandonBtn, abandoning && styles.abandonBtnBusy]}
+            onPress={handleAbandon}
+            activeOpacity={0.8}
+            disabled={abandoning}
+          >
+            <Text style={[styles.abandonBtnText, abandoning && { color: '#94A3B8' }]}>
+              {abandoning ? 'Đang xử lý...' : t('trip.abandonTrip')}
+            </Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
+
+      {/* Spinner giữa map khi đang xử lý hủy */}
+      {abandoning && (
+        <View style={styles.abandoningOverlay} pointerEvents="none">
+          <View style={styles.abandoningCard}>
+            <ActivityIndicator size="large" color={BRAND} />
+            <Text style={styles.abandoningText}>Đang hủy chuyến...</Text>
+          </View>
+        </View>
+      )}
 
       {/* Bottom panel — swipe handle up to reveal SOS section */}
       <Animated.View
@@ -481,6 +522,7 @@ export default function TripScreen() {
       >
         <View {...panResponder.panHandlers} style={styles.handleArea}>
           <View style={styles.handle} />
+          <Text style={styles.handleHint}>Trượt lên để thấy nút SOS</Text>
         </View>
 
         {/* Price + SĐT khách (bấm để gọi) */}
@@ -610,7 +652,7 @@ const styles = StyleSheet.create({
   // Header overlay
   headerOverlay: { position: 'absolute', top: 0, left: 0, right: 0 },
   headerRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
     marginHorizontal: 14, marginTop: 10, gap: 10,
   },
   statusPill: {
@@ -625,7 +667,21 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.10, shadowRadius: 6, elevation: 3,
   },
+  abandonBtnBusy: {
+    backgroundColor: '#F1F5F9', shadowOpacity: 0,  elevation: 0,
+  },
   abandonBtnText: { fontSize: 13, fontWeight: '600', color: '#DC2626' },
+  abandoningOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  abandoningCard: {
+    backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 16, paddingVertical: 20,
+    paddingHorizontal: 32, alignItems: 'center', gap: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12, shadowRadius: 12, elevation: 8,
+  },
+  abandoningText: { fontSize: 14, fontWeight: '600', color: BRAND },
 
   // Bottom panel
   panel: {
@@ -636,8 +692,9 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.10, shadowRadius: 16, elevation: 20,
   },
-  handleArea:  { alignItems: 'center', paddingTop: 4, paddingBottom: 8, marginBottom: 8 },
+  handleArea:  { alignItems: 'center', paddingTop: 10, paddingBottom: 10, marginBottom: 4 },
   handle:      { width: 40, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0' },
+  handleHint:  { fontSize: 11, color: 'rgba(26,46,94,0.45)', fontWeight: '600', marginTop: 5 },
   sosDivider:  { height: 1, backgroundColor: '#E2E8F0', marginHorizontal: -20, marginTop: 8 },
   sosSection:  { alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
 

@@ -6,7 +6,7 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-26 (session 32 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-26 (session 37 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
@@ -176,9 +176,68 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **i18n** vi/en: thêm `cancel.driverCancelledBy` = "{{name}} đã hủy chuyến" / "{{name}} cancelled your trip"
   - **RTDB rules:** không cần cập nhật — `customerFcmToken` trong `info` (write-once), `driverFcmToken` trong `trip_info` (write allowed)
 
-### Bàn giao Session 33 – Bắt đầu từ đây
+- **Session 33:** UX polish tracking + call chip + retry trip flow ✅
+  - **`app/(customer)/tracking.tsx`**: chip gọi tài xế (BRAND, `***{last3}`, disabled/xám khi chưa load); `vehicleColor` trong `driverInfo`; `tryGetTripInfo` poll 3s (từ 5s); status text căn giữa, tất cả trạng thái dùng màu BRAND (bỏ multi-color); `handleCancel()` lưu `retry_trip_data` trước khi về home
+  - **`app/(driver)/trip.tsx`**: ghi `vehicleColor` vào RTDB `trip_info`; xóa status pill khỏi header; chip SĐT khách đổi sang `***{last3}`
+  - **`src/components/QuoteList.tsx`**: thông tin xe gộp 1 dòng `Honda · 51G-12345 · Trắng` (`[vehicleBrand, licensePlate, vehicleColor].filter(Boolean).join(' · ')`)
+  - **`app/(customer)/home.tsx`**: `retryPickupRef` — sau hủy chuyến, map pan đến pickup đã lưu thay vì GPS; `checkLockAndRetry()` quay về step 1 (pickup) thay step 3 (book)
 
-**Tình trạng:** Driver + Customer flow hoàn chỉnh. SOS redesign xong (panel swipe-up, green button, blockchain SOS log). Tất cả Workers deployed.
+- **Session 34:** UI polish — cancel button, map pin centering, quote card margin, SOS button ✅
+  - **`app/(driver)/trip.tsx`**: `headerRow` đổi `justifyContent: 'space-between'` → `'flex-end'` — nút hủy chuyến canh lề phải
+  - **`app/(customer)/home.tsx`**: `snapToLevel` thêm `panTo(mapCenter.current.lat, mapCenter.current.lng, level)` sau `setCrosshairPosition` — map tự căn giữa vùng trống khi kéo panel
+  - **`src/components/QuoteList.tsx`**: thêm `paddingHorizontal: 12` vào `list` style — thẻ báo giá không chạm cạnh màn hình
+  - **`src/components/SosButton.tsx`** polish:
+    - Bóng nút: `shadowColor '#DC2626'` → `'#000'`, opacity nhạt, `elevation 4`; nút sent: `elevation: 0`
+    - Màu số đếm ngược: `NAVY` → `#DC2626` (đỏ cùng tông nút SOS)
+    - Label sau kích hoạt: rút còn 1 dòng `'Hệ thống đã kích hoạt'` (tránh panel giật)
+
+- **Session 35:** Lock screen redesign + SOS blockchain card + i18n polish ✅
+  - **`app/lock-screen.tsx`** redesign hoàn toàn: icon navy + pulse animation, reason chip căn giữa, countdown card navy (3 ô Giờ/Phút/Giây), nút logout → `/role-select` + xóa cả `CUSTOMER_LOCK_UNTIL` và `DRIVER_LOCK_UNTIL`
+  - **`src/components/BlacklistBanner.tsx`**: redesign theo phong cách app (navy/trắng), fix `reason` dùng `t('lock.reason.${reason}', { defaultValue: reason })` tránh hiện key thô
+  - **Bug fix lock screen:** `const { h, m, s } = splitTime(timeLeft)` shadow `const s = StyleSheet.create(...)` → đổi thành `sec` — toàn bộ style bị `undefined` im lặng
+  - **Bug fix i18n race:** navigate sang lock-screen truyền key (`'frequentCancel'`) thay vì `t(...)` — tránh race condition khi i18n chưa load; lock-screen tự dịch bằng `t('lock.reason.${reason}', { defaultValue: reason })`
+  - **Lock duration:** `LOCK_72H` → `LOCK_48H` (48h thay vì 72h)
+  - **i18n** vi/en: thêm 7 keys mới vào block `lock`: `subtitle`, `unlockAfter`, `hours`, `minutes`, `seconds`, `note`, `logout`
+  - **`app/blockchain.tsx`** SOS card redesign: bỏ accent bar, 3 chip đều flex-1 (icon+label trên / giá trị căn giữa dưới), ký tự che = `*`.repeat(length-3)+last3, badge `#N` navy, hash → row "Kích hoạt: Tài xế/Khách", cả 2 nút cùng màu BRAND
+
+- **Session 36:** Customer home UX polish + anti-abuse logout/cancel ✅
+  - **Fix double-cap màu xe:** xóa `.replace(/\b\w/g, c => c.toUpperCase())` trong save logic của `driver-info.tsx` và `register.tsx` — `\w` ASCII-only gây viết hoa 2 ký tự đầu chữ tiếng Việt (VD: "ĐEn Đỏ"); giữ `autoCapitalize="words"` trên keyboard
+  - **`app/(customer)/home.tsx`** – nhiều thay đổi:
+    - `PARTIAL_H = 380` (hardcode, bỏ công thức động)
+    - `contentLevel` state + `panelContentH` động: step 4 level 2 → `FULL_H - HANDLE_H`, còn lại → `PARTIAL_H - HANDLE_H`
+    - `snapToLevel`: collapse shrink ngay, expand grow sau animation
+    - **PanResponder step 4:** min level 1 (không thể kéo xuống level 0); `lvls = [1,2]` thay `[0,1,2]`
+    - **BookPanel** redesign: horizontal paginated ScrollView 2 trang — Page 1 (thông tin tuyến + hint "Vuốt sang để thêm ghi chú"), Page 2 (ô nhập ghi chú); nút "Đăng tin tìm xe" cố định bên ngoài scroll
+    - **QuotesPanel header** đổi sang: chevron-back trái / tiêu đề giữa / đếm ngược phải — đồng nhất với các step khác
+    - **`handleCancelSearch`** + **`handleLogout`**: nếu step 4 đã có báo giá → confirm dialog → `applyPenaltyThenRun()` (+0.5 `cancelCount` SecureStore + Firestore) → nếu ≥ 3 → lock 48h; nếu chưa có báo giá → cancel/logout bình thường
+    - Helper `cancelSearchCleanup()`, `applyPenaltyThenRun()`, `doLogout()` tách riêng tránh code trùng
+  - **`src/types/index.ts`**: thêm `CUSTOMER_CANCEL_COUNT = 'customer_cancel_count'` vào `SecureStoreKey`
+  - **i18n** vi/en: thêm `trip.swipeForNote`, `cancel.abandonHasQuotes`
+
+- **Session 37:** Driver cancel flow redesign + pendingPenalty array + Google Maps navigation ✅
+  - **`app/(driver)/trip.tsx`** — `handleAbandon()` viết lại hoàn toàn:
+    - `abandoningRef` guard chặn double-tap tuyệt đối
+    - `abandoning` state: button đổi màu "Đang xử lý..." + spinner card giữa map
+    - Lưu `cancelling: true` vào SecureStore **trước** spinner — bảo vệ TH app bị kill
+    - ODC deduction chạy ngầm (`getEncryptedKey → recordTrip`), fail → `addPendingPenalty` tích lũy
+    - FCM thông báo khách: best-effort (gửi 1 lần, fail kệ)
+    - **Blocking** Firestore: `updateDriverStatus('ready')` + `setDriverPendingTrip(false)` retry 3 lần × 2s
+    - Xong → `clearPendingTrip` + `saveDriverInfo(status:'ready')` → navigate
+  - **`app/(driver)/online.tsx`** — `init()`: `updateDriverStatus('ready')` retry 3 lần thay vì fire-and-forget; cập nhật SecureStore sau khi Firestore OK
+  - **`src/types/index.ts`**: `PendingTrip` thêm `cancelling?: boolean` — cờ phân biệt "đang hủy dở" vs "chuyến đang chạy dở"
+  - **`app/index.tsx`** — `checkSession()` TH2 detection:
+    - `pendingTrip.cancelling === true` → không phải gian lận, không phải pending-trip → dọn dẹp local + Firestore retry ngầm → `/(driver)/home` (processPendingPenalty chạy ở đây)
+    - `pendingTrip` không có `cancelling` + `status=busy` → pending-trip screen (flow cũ)
+  - **`src/utils/storage.ts`** — pendingPenalty đổi sang **mảng tích lũy**:
+    - `getPendingPenalties()` → `PendingPenalty[]`, backward-compat với format object cũ
+    - `addPendingPenalty()` append vào mảng (không ghi đè)
+    - `savePendingPenalties()` lưu mảng đã xử lý
+  - **`app/(driver)/home.tsx`** — `processPendingPenalty()` xử lý từng phần tử, giữ lại cái fail, xóa cái thành công, thông báo tổng số lần đã trừ
+  - **`app/(driver)/trip.tsx`** — `handleOpenMaps()`: deep link `google.navigation:q=lat,lng&mode=X` — tự động chọn mode `l` (xe máy) hoặc `d` (ô tô) từ `driverInfo.vehicleType`; fallback web URL nếu không có Google Maps
+
+### Bàn giao Session 38 – Bắt đầu từ đây
+
+**Tình trạng:** Driver cancel flow hoàn chỉnh (double-tap fix, spinner UX, cancelling flag, pendingPenalty array, TH2 detection). Google Maps mở đúng mode xe. Chưa build lại APK.
 
 ### Việc cần làm tiếp theo
 

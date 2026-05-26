@@ -4,8 +4,9 @@ import { useEffect, useRef } from 'react'
 import { View, StyleSheet, Animated, Image } from 'react-native'
 import { router } from 'expo-router'
 import * as SecureStore from 'expo-secure-store'
-import { setDriverPendingTrip } from '../src/services/firestore'
-import { SecureStoreKey, DriverInfo } from '../src/types'
+import { setDriverPendingTrip, updateDriverStatus } from '../src/services/firestore'
+import { saveDriverInfo } from '../src/utils/storage'
+import { SecureStoreKey, DriverInfo, PendingTrip, DriverStatus } from '../src/types'
 import { APP } from '../src/constants'
 
 export default function SplashScreen() {
@@ -56,6 +57,31 @@ export default function SplashScreen() {
           } else {
             SecureStore.deleteItemAsync(SecureStoreKey.DRIVER_LOCK_UNTIL)
             setDriverPendingTrip(info.uid, false).catch(() => {})
+          }
+        }
+
+        if (pending) {
+          const trip: PendingTrip = JSON.parse(pending)
+          if (trip.cancelling) {
+            // TH2: app bị kill trong lúc đang hủy chuyến
+            // → dọn dẹp local + Firestore rồi vào home (processPendingPenalty tự chạy ở home.tsx)
+            await SecureStore.deleteItemAsync(SecureStoreKey.PENDING_TRIP)
+            await saveDriverInfo({ ...info, status: 'offline' as DriverStatus })
+            ;(async () => {
+              for (let i = 0; i < 3; i++) {
+                try {
+                  await Promise.all([
+                    updateDriverStatus(info.uid, 'offline'),
+                    setDriverPendingTrip(info.uid, false),
+                  ])
+                  return
+                } catch {
+                  if (i < 2) await new Promise<void>(r => setTimeout(r, 2000))
+                }
+              }
+            })()
+            router.replace('/(driver)/home')
+            return
           }
         }
 

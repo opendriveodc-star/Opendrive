@@ -21,9 +21,10 @@ export enum SecureStoreKey {
   DRIVER_LOCK_UNTIL    = 'driver_lock_until',
   PENDING_TRIP         = 'pending_trip',
   PENDING_PENALTY      = 'pending_penalty',
-  CUSTOMER_INFO        = 'customer_info',
-  CUSTOMER_LOCK_UNTIL  = 'customer_lock_until',
-  MINER_INFO           = 'miner_info',
+  CUSTOMER_INFO         = 'customer_info',
+  CUSTOMER_LOCK_UNTIL   = 'customer_lock_until',
+  CUSTOMER_CANCEL_COUNT = 'customer_cancel_count',
+  MINER_INFO            = 'miner_info',
   MINER_SESSION        = 'miner_session',
   USER_ROLE            = 'user_role',
 }
@@ -152,6 +153,7 @@ export interface PendingTrip {
   pickupLng:     number
   customerPhone: string
   rating:        RatingValue | null  // null cho đến khi khách đánh giá
+  cancelling?:   boolean            // đang trong quá trình hủy — set trước khi spinner
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
