@@ -255,6 +255,13 @@ export interface TripRealtimeInfo {
   cancelled?:     'customer' | 'driver'
 }
 
+export interface FreightInfo {
+  senderName:    string
+  senderPhone:   string
+  recipientName: string
+  recipientPhone: string
+}
+
 export interface TripQuote {
   driverUid:    string
   driverName:   string

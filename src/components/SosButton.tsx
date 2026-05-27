@@ -1,19 +1,19 @@
 // src/components/SosButton.tsx
-// Nút SOS: giữ 3 giây để kích hoạt. Vòng tròn tiến độ + ripple + rung.
+// Nút SOS: giữ 3s → đếm ngược (navy) bên trên → rung → thông báo blockchain
 
 import React, { useRef, useEffect, useState } from 'react'
-import {
-  View, Text, Animated, StyleSheet, Pressable, Vibration,
-} from 'react-native'
-import { Ionicons } from '@expo/vector-icons'
+import { View, Text, Animated, StyleSheet, Pressable, Vibration } from 'react-native'
 
-const BTN_SIZE    = 64
-const RING_D      = BTN_SIZE + 16    // 80
-const RING_HALF   = RING_D / 2       // 40
-const RING_BORDER = 3
-const WAVE_D      = 130
-const GREEN       = '#22C55E'
-const GREEN_DIM   = 'rgba(34,197,94,0.12)'
+const BTN_SIZE = 72
+const WAVE_D   = 164
+const NAVY     = '#1A2E5E'
+const RED      = 'rgba(239, 68, 68, 0.62)'   // đỏ lợt, trong suốt
+const RED_DIM  = 'rgba(220, 38, 38, 0.11)'
+
+// Nút + sóng cùng tâm — tâm tại (WAVE_D/2, WAVE_D/2)
+const BTN_LEFT       = (WAVE_D - BTN_SIZE) / 2   // 46
+const BTN_TOP        = (WAVE_D - BTN_SIZE) / 2   // 46 (cùng tâm với sóng)
+const WAVE_TOP_SHIFT = 0                          // sóng top: 0 → tâm = (82,82) = tâm nút
 
 interface SosButtonProps {
   onTriggered: () => void
@@ -21,39 +21,30 @@ interface SosButtonProps {
 }
 
 export default function SosButton({ onTriggered, disabled = false }: SosButtonProps) {
-  const [sosState,  setSosState]  = useState<'idle'|'holding'|'sent'>(disabled ? 'sent' : 'idle')
+  const [sosState,  setSosState]  = useState<'idle' | 'holding' | 'sent'>(disabled ? 'sent' : 'idle')
   const [countdown, setCountdown] = useState(3)
+  const stateRef  = useRef<'idle' | 'holding' | 'sent'>(disabled ? 'sent' : 'idle')
+  const timerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+  const countRef  = useRef(3)
 
-  const progressAnim = useRef(new Animated.Value(0)).current
-  const runningAnim  = useRef<Animated.CompositeAnimation | null>(null)
+  // Sóng lan tỏa — loop vô tận
   const wave1 = useRef(new Animated.Value(0)).current
   const wave2 = useRef(new Animated.Value(0)).current
   const wave3 = useRef(new Animated.Value(0)).current
-  const timerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
-  const countRef  = useRef(3)
-  const stateRef  = useRef<'idle'|'holding'|'sent'>(disabled ? 'sent' : 'idle')
 
-  // Ripple waves
   useEffect(() => {
     const loop = (v: Animated.Value, delay: number) =>
       Animated.loop(Animated.sequence([
         Animated.delay(delay),
-        Animated.timing(v, { toValue: 1, duration: 2200, useNativeDriver: true }),
+        Animated.timing(v, { toValue: 1, duration: 2400, useNativeDriver: true }),
+        Animated.timing(v, { toValue: 0, duration: 0,    useNativeDriver: true }), // reset tức thì
       ]))
-    const a1 = loop(wave1, 0); const a2 = loop(wave2, 700); const a3 = loop(wave3, 1400)
+    const a1 = loop(wave1, 0)
+    const a2 = loop(wave2, 800)
+    const a3 = loop(wave3, 1600)
     a1.start(); a2.start(); a3.start()
     return () => { a1.stop(); a2.stop(); a3.stop() }
   }, [])
-
-  // Progress ring interpolation (right half fills first, then left)
-  const rightRot = progressAnim.interpolate({
-    inputRange:  [0,   0.5,  1],
-    outputRange: ['-180deg', '0deg',    '0deg'],
-  })
-  const leftRot = progressAnim.interpolate({
-    inputRange:  [0,   0.5,  1],
-    outputRange: ['-180deg', '-180deg', '0deg'],
-  })
 
   function startHold() {
     if (stateRef.current !== 'idle') return
@@ -61,12 +52,6 @@ export default function SosButton({ onTriggered, disabled = false }: SosButtonPr
     setSosState('holding')
     countRef.current = 3
     setCountdown(3)
-
-    runningAnim.current = Animated.timing(progressAnim, {
-      toValue: 1, duration: 3000, useNativeDriver: true,
-    })
-    runningAnim.current.start()
-
     timerRef.current = setInterval(() => {
       countRef.current -= 1
       setCountdown(countRef.current)
@@ -74,113 +59,100 @@ export default function SosButton({ onTriggered, disabled = false }: SosButtonPr
         clearInterval(timerRef.current!); timerRef.current = null
         stateRef.current = 'sent'
         setSosState('sent')
-        Vibration.vibrate([0, 40, 60, 40])
+        Vibration.vibrate(500)
         onTriggered()
       }
     }, 1000)
   }
 
   function cancelHold() {
-    if (stateRef.current === 'sent') return
+    if (stateRef.current !== 'holding') return
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-    if (stateRef.current === 'holding') {
-      runningAnim.current?.stop()
-      Animated.timing(progressAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start()
-      stateRef.current = 'idle'
-      setSosState('idle')
-      setCountdown(3)
-    }
+    stateRef.current = 'idle'
+    setSosState('idle')
+    setCountdown(3)
   }
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
 
-  const isSent = sosState === 'sent'; const isHolding = sosState === 'holding'
+  const isSent    = sosState === 'sent'
+  const isHolding = sosState === 'holding'
 
   const waveStyle = (v: Animated.Value) => ({
     position: 'absolute' as const,
+    top: 0, left: 0,
     width: WAVE_D, height: WAVE_D, borderRadius: WAVE_D / 2,
-    backgroundColor: GREEN_DIM,
-    transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [RING_D / WAVE_D, 1] }) }],
-    opacity:   v.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0.9, 0.4, 0] }),
+    backgroundColor: RED_DIM,
+    transform: [{
+      scale: v.interpolate({ inputRange: [0, 1], outputRange: [BTN_SIZE / WAVE_D, 1] }),
+    }],
+    opacity: v.interpolate({ inputRange: [0, 0.25, 1], outputRange: [0.9, 0.45, 0] }),
   })
 
   return (
-    <View style={styles.wrapper}>
-      {/* Ripple waves */}
-      {!isSent && (
-        <>
-          <Animated.View style={waveStyle(wave1)} />
-          <Animated.View style={waveStyle(wave2)} />
-          <Animated.View style={waveStyle(wave3)} />
-        </>
-      )}
+    <View style={s.wrapper}>
+      {/* Vòng tròn chứa sóng + đếm ngược + nút */}
+      <View style={s.circle}>
 
-      {/* Circular progress ring */}
-      {!isSent && (
-        <View style={styles.ring}>
-          {/* Track (gray background ring) */}
-          <View style={styles.track} />
-          {/* Right half fill */}
-          <View style={[styles.halfClip, { left: RING_HALF }]}>
-            <Animated.View style={[styles.fill, { left: -RING_HALF, transform: [{ rotate: rightRot }] }]} />
-          </View>
-          {/* Left half fill */}
-          <View style={[styles.halfClip, { left: 0 }]}>
-            <Animated.View style={[styles.fill, { left: 0, transform: [{ rotate: leftRot }] }]} />
-          </View>
-        </View>
-      )}
+        {/* Layer 1 – Sóng lan tỏa */}
+        {!isSent && <Animated.View style={waveStyle(wave1)} />}
+        {!isSent && <Animated.View style={waveStyle(wave2)} />}
+        {!isSent && <Animated.View style={waveStyle(wave3)} />}
 
-      {/* Button */}
-      <Pressable
-        onPressIn={startHold}
-        onPressOut={cancelHold}
-        style={[styles.btn, isSent && styles.btnSent]}
-      >
+        {/* Layer 2 – Đếm ngược phía trên nút (navy đậm) */}
+        {isHolding && (
+          <Text style={[s.countdown, { top: BTN_TOP - 46, left: 0, width: WAVE_D }]}>
+            {countdown}
+          </Text>
+        )}
+
+        {/* Layer 3 – Nút SOS */}
+        <Pressable
+          onPressIn={startHold}
+          onPressOut={cancelHold}
+          disabled={isSent}
+          style={[s.btn, isSent && s.btnSent, { top: BTN_TOP, left: BTN_LEFT }]}
+        >
+          <Text style={s.sosText}>{isSent ? '✓' : 'SOS'}</Text>
+        </Pressable>
+      </View>
+
+      {/* Nhãn bên dưới */}
+      <Text style={[s.label, isSent && s.labelSent]}>
         {isSent
-          ? <Ionicons name="checkmark-circle" size={28} color="#fff" />
+          ? 'Hệ thống đã kích hoạt'
           : isHolding
-            ? <Text style={styles.countdown}>{countdown}</Text>
-            : <Ionicons name="shield-checkmark" size={26} color="#fff" />
-        }
-      </Pressable>
-
-      {/* Instruction */}
-      <Text style={[styles.label, isSent && styles.labelSent]}>
-        {isSent
-          ? 'Tín hiệu đã gửi'
-          : 'Nhấn và giữ 3 giây\nnếu bạn gặp nguy hiểm'}
+            ? 'Đang kích hoạt...'
+            : 'Nhấn và giữ 3 giây để kích hoạt'}
       </Text>
     </View>
   )
 }
 
-const styles = StyleSheet.create({
-  wrapper: {
-    alignItems: 'center', justifyContent: 'center',
-    width: WAVE_D + 16, height: WAVE_D + 50,
+const s = StyleSheet.create({
+  wrapper: { alignItems: 'center' },
+  circle:  { width: WAVE_D, height: WAVE_D },
+
+  countdown: {
+    position: 'absolute',
+    textAlign: 'center',
+    fontSize: 32, fontWeight: '900', color: '#DC2626',
   },
-  ring: { position: 'absolute', width: RING_D, height: RING_D },
-  track: {
-    position: 'absolute', width: RING_D, height: RING_D,
-    borderRadius: RING_HALF, borderWidth: RING_BORDER, borderColor: '#D1FAE5',
-  },
-  halfClip: { position: 'absolute', top: 0, width: RING_HALF, height: RING_D, overflow: 'hidden' },
-  fill: {
-    position: 'absolute', top: 0, width: RING_D, height: RING_D,
-    borderRadius: RING_HALF, borderWidth: RING_BORDER, borderColor: GREEN,
-  },
+
   btn: {
+    position: 'absolute',
     width: BTN_SIZE, height: BTN_SIZE, borderRadius: BTN_SIZE / 2,
-    backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center',
-    shadowColor: GREEN, shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45, shadowRadius: 8, elevation: 8,
+    backgroundColor: RED,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18, shadowRadius: 6, elevation: 4,
   },
-  btnSent:   { backgroundColor: '#94A3B8', shadowColor: '#94A3B8' },
-  countdown: { color: '#fff', fontSize: 26, fontWeight: '900' },
+  btnSent:  { backgroundColor: 'rgba(148,163,184,0.7)', shadowOpacity: 0, elevation: 0 },
+  sosText:  { color: '#fff', fontSize: 22, fontWeight: '900', letterSpacing: 2 },
+
   label: {
     marginTop: 10, fontSize: 13, color: '#475569',
-    textAlign: 'center', lineHeight: 19, fontWeight: '500',
+    textAlign: 'center', lineHeight: 20, fontWeight: '500',
   },
-  labelSent: { color: '#94A3B8' },
+  labelSent: { color: '#DC2626', fontWeight: '700' },
 })

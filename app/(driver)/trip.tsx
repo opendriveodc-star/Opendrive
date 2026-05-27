@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, Linking, Animated, PanResponder,
-  ActivityIndicator, StatusBar,
+  ActivityIndicator, StatusBar, ScrollView, Dimensions,
 } from 'react-native'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -16,15 +16,18 @@ import MapView from '../../src/components/MapView'
 import type { MapViewHandle } from '../../src/components/MapView'
 import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip, saveDriverInfo, savePendingTrip, addPendingPenalty } from '../../src/utils/storage'
 import { recordTrip, notifyCancel, sosAlert } from '../../src/services/cloudflare'
-import { updateDriverStatus, setDriverPendingTrip, incrementCustomerPenalty } from '../../src/services/firestore'
+import { updateDriverStatus, setDriverPendingTrip, incrementCustomerPenalty, setCustomerLockedUntil } from '../../src/services/firestore'
 import { encodeMemo, encodeSosMemo } from '../../src/services/odc'
 import SosButton from '../../src/components/SosButton'
 import { rtdb } from '../../src/services/firebase'
 import { distanceKm } from '../../src/services/location'
 import { LOCATION } from '../../src/constants'
 import type {
-  PendingTrip, DriverInfo, RatingValue, TripRealtimeInfo,
+  PendingTrip, DriverInfo, RatingValue, TripRealtimeInfo, FreightInfo,
 } from '../../src/types'
+
+const SCREEN_W = Dimensions.get('window').width
+const INFO_PAGE_W = SCREEN_W - 40  // panel paddingHorizontal 20 each side
 
 const BRAND          = '#1A2E5E'
 const BRAND_LIGHT    = '#E8EDF6'
@@ -52,6 +55,7 @@ export default function TripScreen() {
   const [distToDropoff,    setDistToDropoff]    = useState<number | null>(null)
   const [sosSent,          setSosSent]          = useState(false)
   const [abandoning,       setAbandoning]       = useState(false)
+  const [freightInfo,      setFreightInfo]      = useState<FreightInfo | null>(null)
 
   const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const ratingPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -114,6 +118,14 @@ export default function TripScreen() {
           if (info?.customerFcmToken) customerFcmTokenRef.current = info.customerFcmToken as string
         } catch {}
 
+        // Đọc freight_info nếu là tài xế giao hàng
+        if (drv?.transportModel === 'freight') {
+          try {
+            const fi = await rtdb.get<FreightInfo>(`trips/${trip.tripId}/freight_info`)
+            if (fi) setFreightInfo(fi)
+          } catch {}
+        }
+
         // Kiểm tra khoảng cách đến điểm đón mỗi 5s
         if (trip.pickupLat && trip.pickupLng) {
           pickupProximityRef.current = setInterval(async () => {
@@ -150,6 +162,20 @@ export default function TripScreen() {
     if (proximityRef.current)       { clearInterval(proximityRef.current);       proximityRef.current       = null }
     if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
     dismissNavNotif()
+
+    // Tài xế ghi penalty thay khách — tránh khách tắt mạng để lách phạt
+    const customerPhone = pendingTripRef.current?.customerPhone
+    if (customerPhone) {
+      const amount = pickedUpRef.current ? 2 : 1
+      incrementCustomerPenalty(customerPhone, amount)
+        .then(newCount => {
+          if (newCount >= 3) {
+            setCustomerLockedUntil(customerPhone, Date.now() + 48 * 60 * 60 * 1000).catch(() => {})
+          }
+        })
+        .catch(() => {})
+    }
+
     showAlert(t('cancel.customerCancelled'), undefined, [{
       text: 'OK',
       onPress: async () => {
@@ -252,36 +278,58 @@ export default function TripScreen() {
           if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
           if (proximityRef.current)       { clearInterval(proximityRef.current);       proximityRef.current = null }
 
-          // [BACKGROUND] Trừ ODC — không block, thất bại thì ghi pendingPenalty → xử lý lần sau
-          if (trip && drv) {
-            getEncryptedKey().then(key => {
-              if (!key) throw new Error('no key')
-              return recordTrip({
-                driverUid: drv.uid, rating: 1, tripPrice: trip.tripPrice,
-                memo27bytes: encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, 1),
-                isCancelled: true, encryptedPrivateKey: key,
+          // Kiểm tra khách có hủy trước không (FCM có thể không đến tài xế)
+          let customerAlreadyCancelled = false
+          if (trip) {
+            try {
+              customerAlreadyCancelled = (await rtdb.get<boolean>(`trips/${trip.tripId}/cancelled_by_customer`)) === true
+            } catch {}
+          }
+
+          if (customerAlreadyCancelled) {
+            // Khách là người hủy → tài xế là nạn nhân, không trừ ODC tài xế
+            // Ghi penalty cho khách vì FCM fail nên handleCustomerCancelledAlert chưa ghi
+            if (trip) {
+              const amount = pickedUpRef.current ? 2 : 1
+              incrementCustomerPenalty(trip.customerPhone, amount)
+                .then(newCount => {
+                  if (newCount >= 3) setCustomerLockedUntil(trip.customerPhone, Date.now() + 48 * 60 * 60 * 1000).catch(() => {})
+                })
+                .catch(() => {})
+            }
+          } else {
+            // Tài xế thật sự bỏ chuyến — đánh dấu RTDB để khách biết nếu FCM không đến
+            if (trip) rtdb.set(`trips/${trip.tripId}/cancelled_by_driver`, true).catch(() => {})
+            // Trừ ODC tài xế
+            if (trip && drv) {
+              getEncryptedKey().then(key => {
+                if (!key) throw new Error('no key')
+                return recordTrip({
+                  driverUid: drv.uid, rating: 1, tripPrice: trip.tripPrice,
+                  memo27bytes: encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, 1),
+                  isCancelled: true, encryptedPrivateKey: key,
+                })
+              }).catch(async () => {
+                await addPendingPenalty({
+                  driverUid:    drv.uid,
+                  tripPrice:    trip.tripPrice,
+                  memo27Base64: encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, 1),
+                }).catch(() => {})
               })
-            }).catch(async () => {
-              await addPendingPenalty({
-                driverUid:    drv.uid,
-                tripPrice:    trip.tripPrice,
-                memo27Base64: encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, 1),
-              }).catch(() => {})
-            })
-          }
+            }
 
-          // [BACKGROUND] Phạt khách nếu tài xế đã đến điểm đón
-          if (pickedUpRef.current && trip) {
-            incrementCustomerPenalty(trip.customerPhone, 2).catch(() => {})
-          }
+            // Phạt khách nếu tài xế đã đến điểm đón
+            if (pickedUpRef.current && trip) {
+              incrementCustomerPenalty(trip.customerPhone, 2).catch(() => {})
+            }
 
-          // [BEST-EFFORT] Thông báo khách qua FCM — gửi 1 lần, fail kệ
-          if (trip && customerFcmTokenRef.current && drv) {
-            notifyCancel(trip.tripId, 'driver', customerFcmTokenRef.current, drv.name).catch(() => {})
+            // Thông báo khách qua FCM
+            if (trip && customerFcmTokenRef.current && drv) {
+              notifyCancel(trip.tripId, 'driver', customerFcmTokenRef.current, drv.name).catch(() => {})
+            }
           }
 
           // [BLOCKING] Firestore: status='ready' + pendingTrip=false — retry 3 lần
-          // Phải xong trước khi xóa dữ liệu local và chuyển trang
           if (drv) {
             for (let i = 0; i < 3; i++) {
               try {
@@ -297,7 +345,9 @@ export default function TripScreen() {
           }
 
           // Xóa dữ liệu local + chuyển trang
+          // Khách đã hủy trước → xóa RTDB trip luôn; tài xế hủy → để khách xóa sau khi nhận thông báo
           await clearPendingTrip()
+          if (customerAlreadyCancelled && trip) rtdb.delete(`trips/${trip.tripId}`).catch(() => {})
           if (drv) saveDriverInfo({ ...drv, status: 'ready' }).catch(() => {})
           dismissNavNotif()
           router.replace('/(driver)/online')
@@ -529,46 +579,129 @@ export default function TripScreen() {
           <Text style={styles.handleHint}>Trượt lên để thấy nút SOS</Text>
         </View>
 
-        {/* Price + SĐT khách (bấm để gọi) */}
-        <View style={styles.priceRow}>
-          <View>
-            <Text style={styles.priceLabel}>{t('online.priceLabel')}</Text>
-            <Text style={styles.priceValue}>{priceFormatted} đ</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.customerChip}
-            onPress={() => Linking.openURL(`tel:${pendingTrip.customerPhone}`)}
-            activeOpacity={0.75}
+        {/* Info section — 2 pages horizontal for freight, single for passenger */}
+        {driverInfo?.transportModel === 'freight' ? (
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            style={{ marginBottom: 8 }}
+            keyboardShouldPersistTaps="handled"
           >
-            <Ionicons name="call-outline" size={13} color={BRAND} />
-            <Text style={styles.customerChipText}>{`***${pendingTrip.customerPhone.slice(-3)}`}</Text>
-          </TouchableOpacity>
-        </View>
+            {/* Page 1 – price + addresses + note */}
+            <View style={{ width: INFO_PAGE_W }}>
+              <View style={styles.priceRow}>
+                <View>
+                  <Text style={styles.priceLabel}>{t('online.priceLabel')}</Text>
+                  <Text style={styles.priceValue}>{priceFormatted} đ</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.customerChip}
+                  onPress={() => Linking.openURL(`tel:${pendingTrip.customerPhone}`)}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons name="call-outline" size={13} color={BRAND} />
+                  <Text style={styles.customerChipText}>{`***${pendingTrip.customerPhone.slice(-3)}`}</Text>
+                </TouchableOpacity>
+              </View>
+              {!!pickupAddress && (
+                <View style={styles.addressRow}>
+                  <Ionicons name="location-sharp" size={14} color={BRAND} style={{ marginTop: 2, flexShrink: 0 }} />
+                  <Text style={styles.addressText} numberOfLines={2}>{pickupAddress}</Text>
+                </View>
+              )}
+              {!!destAddress && (
+                <View style={styles.addressRow}>
+                  <Ionicons name="location-sharp" size={14} color="#94A3B8" style={{ marginTop: 2, flexShrink: 0 }} />
+                  <Text style={styles.addressText} numberOfLines={2}>{destAddress}</Text>
+                </View>
+              )}
+              {!!tripNote && (
+                <View style={[styles.addressRow, { backgroundColor: '#FFFBEB' }]}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={14} color="#F59E0B" style={{ marginTop: 2, flexShrink: 0 }} />
+                  <Text style={[styles.addressText, { color: '#92400E', fontStyle: 'italic' }]} numberOfLines={3}>
+                    <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Ghi chú: </Text>{tripNote}
+                  </Text>
+                </View>
+              )}
+              <Text style={styles.freightSwipeHint}>{t('trip.freightContactsPage')} →</Text>
+            </View>
 
-        {/* Điểm đón */}
-        {!!pickupAddress && (
-          <View style={styles.addressRow}>
-            <Ionicons name="location-sharp" size={14} color={BRAND} style={{ marginTop: 2, flexShrink: 0 }} />
-            <Text style={styles.addressText} numberOfLines={2}>{pickupAddress}</Text>
-          </View>
-        )}
-
-        {/* Điểm đến */}
-        {!!destAddress && (
-          <View style={styles.addressRow}>
-            <Ionicons name="location-sharp" size={14} color="#94A3B8" style={{ marginTop: 2, flexShrink: 0 }} />
-            <Text style={styles.addressText} numberOfLines={2}>{destAddress}</Text>
-          </View>
-        )}
-
-        {/* Ghi chú */}
-        {!!tripNote && (
-          <View style={[styles.addressRow, { backgroundColor: '#FFFBEB' }]}>
-            <Ionicons name="chatbubble-ellipses-outline" size={14} color="#F59E0B" style={{ marginTop: 2, flexShrink: 0 }} />
-            <Text style={[styles.addressText, { color: '#92400E', fontStyle: 'italic' }]} numberOfLines={3}>
-              <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Ghi chú: </Text>{tripNote}
-            </Text>
-          </View>
+            {/* Page 2 – freight contacts */}
+            <View style={{ width: INFO_PAGE_W }}>
+              <Text style={styles.freightPageTitle}>{t('trip.freightContactsPage')}</Text>
+              {/* Người giao */}
+              <View style={styles.freightContactCard}>
+                <View style={styles.freightContactHeader}>
+                  <Ionicons name="arrow-up-circle-outline" size={15} color={BRAND} />
+                  <Text style={styles.freightContactRole}>{t('trip.senderLabel')}</Text>
+                </View>
+                <Text style={styles.freightContactName}>{freightInfo?.senderName ?? '—'}</Text>
+                <TouchableOpacity
+                  style={styles.freightCallBtn}
+                  onPress={() => freightInfo?.senderPhone && Linking.openURL(`tel:${freightInfo.senderPhone}`)}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons name="call-outline" size={13} color={BRAND} />
+                  <Text style={styles.freightCallText}>{freightInfo?.senderPhone ?? '—'}</Text>
+                </TouchableOpacity>
+              </View>
+              {/* Người nhận */}
+              <View style={[styles.freightContactCard, { marginTop: 8 }]}>
+                <View style={styles.freightContactHeader}>
+                  <Ionicons name="arrow-down-circle-outline" size={15} color="#EA580C" />
+                  <Text style={[styles.freightContactRole, { color: '#EA580C' }]}>{t('trip.recipientLabel')}</Text>
+                </View>
+                <Text style={styles.freightContactName}>{freightInfo?.recipientName ?? '—'}</Text>
+                <TouchableOpacity
+                  style={[styles.freightCallBtn, { borderColor: '#EA580C' }]}
+                  onPress={() => freightInfo?.recipientPhone && Linking.openURL(`tel:${freightInfo.recipientPhone}`)}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons name="call-outline" size={13} color="#EA580C" />
+                  <Text style={[styles.freightCallText, { color: '#EA580C' }]}>{freightInfo?.recipientPhone ?? '—'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        ) : (
+          <>
+            {/* Passenger: existing single-page layout */}
+            <View style={styles.priceRow}>
+              <View>
+                <Text style={styles.priceLabel}>{t('online.priceLabel')}</Text>
+                <Text style={styles.priceValue}>{priceFormatted} đ</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.customerChip}
+                onPress={() => Linking.openURL(`tel:${pendingTrip.customerPhone}`)}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="call-outline" size={13} color={BRAND} />
+                <Text style={styles.customerChipText}>{`***${pendingTrip.customerPhone.slice(-3)}`}</Text>
+              </TouchableOpacity>
+            </View>
+            {!!pickupAddress && (
+              <View style={styles.addressRow}>
+                <Ionicons name="location-sharp" size={14} color={BRAND} style={{ marginTop: 2, flexShrink: 0 }} />
+                <Text style={styles.addressText} numberOfLines={2}>{pickupAddress}</Text>
+              </View>
+            )}
+            {!!destAddress && (
+              <View style={styles.addressRow}>
+                <Ionicons name="location-sharp" size={14} color="#94A3B8" style={{ marginTop: 2, flexShrink: 0 }} />
+                <Text style={styles.addressText} numberOfLines={2}>{destAddress}</Text>
+              </View>
+            )}
+            {!!tripNote && (
+              <View style={[styles.addressRow, { backgroundColor: '#FFFBEB' }]}>
+                <Ionicons name="chatbubble-ellipses-outline" size={14} color="#F59E0B" style={{ marginTop: 2, flexShrink: 0 }} />
+                <Text style={[styles.addressText, { color: '#92400E', fontStyle: 'italic' }]} numberOfLines={3}>
+                  <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Ghi chú: </Text>{tripNote}
+                </Text>
+              </View>
+            )}
+          </>
         )}
 
         <View style={styles.btnGroup}>
@@ -701,6 +834,16 @@ const styles = StyleSheet.create({
   handleHint:  { fontSize: 11, color: 'rgba(26,46,94,0.45)', fontWeight: '600', marginTop: 5 },
   sosDivider:  { height: 1, backgroundColor: '#E2E8F0', marginHorizontal: -20, marginTop: 8 },
   sosSection:  { alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
+
+  // Freight contacts page styles
+  freightSwipeHint:    { fontSize: 11, color: '#94A3B8', fontStyle: 'italic', textAlign: 'center', marginTop: 4 },
+  freightPageTitle:    { fontSize: 13, fontWeight: '700', color: BRAND, marginBottom: 8 },
+  freightContactCard:  { backgroundColor: '#F8FAFC', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: '#E2E8F0' },
+  freightContactHeader:{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 },
+  freightContactRole:  { fontSize: 11, fontWeight: '700', color: BRAND, textTransform: 'uppercase', letterSpacing: 0.5 },
+  freightContactName:  { fontSize: 14, fontWeight: '600', color: '#0F172A', marginBottom: 6 },
+  freightCallBtn:      { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', borderWidth: 1, borderColor: BRAND, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+  freightCallText:     { fontSize: 13, fontWeight: '600', color: BRAND },
 
   priceRow: {
     flexDirection: 'row', alignItems: 'center',

@@ -116,9 +116,10 @@ function formatDate(iso: string) {
 
 function shortHash(hash: string) { return hash.slice(0, 8) + '...' + hash.slice(-8) }
 
-function maskPhone(phone: string) {
-  if (phone.length < 7) return phone
-  return phone.slice(0, 3) + '*'.repeat(phone.length - 6) + phone.slice(-3)
+function last3(s: string) {
+  if (!s) return '—'
+  if (s.length <= 3) return s
+  return '*'.repeat(s.length - 3) + s.slice(-3)
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -227,64 +228,71 @@ export default function BlockchainScreen() {
   )
 
   // ── Render SOS card ────────────────────────────────────────────────────────
-  const renderSos = ({ item, index }: { item: SosRecord; index: number }) => (
-    <View style={[s.card, s.sosCard]}>
-      <View style={s.cardHeader}>
-        <View style={[s.indexBadge, { backgroundColor: SOS_LIGHT }]}>
-          <Text style={[s.indexText, { color: SOS_RED }]}>#{sosList.length - index}</Text>
+  const renderSos = ({ item, index }: { item: SosRecord; index: number }) => {
+    const isDriver = item.by === 'driver'
+    const triggerLabel = isDriver ? 'Tài xế' : item.by === 'customer' ? 'Khách' : 'Không rõ'
+    return (
+      <View style={[s.card, s.sosCard]}>
+        {/* Header */}
+        <View style={s.cardHeader}>
+          <View style={[s.indexBadge, { backgroundColor: BRAND }]}>
+            <Text style={[s.indexText, { color: '#fff' }]}>#{sosList.length - index}</Text>
+          </View>
+          <Text style={s.dateText}>{formatDate(item.createdAt)}</Text>
         </View>
-        <Text style={s.dateText}>{formatDate(item.createdAt)}</Text>
-        <View style={[s.byBadge, { backgroundColor: item.by === 'driver' ? BRAND_MUTED : '#FEF3C7' }]}>
-          <Ionicons
-            name={item.by === 'driver' ? 'car-outline' : 'person-outline'}
-            size={11}
-            color={item.by === 'driver' ? BRAND : '#92400E'}
-          />
-          <Text style={[s.byText, { color: item.by === 'driver' ? BRAND : '#92400E' }]}>
-            {item.by === 'driver' ? 'Tài xế' : item.by === 'customer' ? 'Khách' : '?'}
-          </Text>
+
+        {/* 3 chips đều nhau: SĐT tài xế · SĐT khách · Biển số */}
+        <View style={s.chipsRow}>
+          <View style={s.infoChip}>
+            <View style={s.chipTop}>
+              <Ionicons name="car-outline" size={12} color={BRAND} />
+              <Text style={s.chipLabel}>Tài xế</Text>
+            </View>
+            <Text style={s.chipVal}>{last3(item.driverPhone)}</Text>
+          </View>
+          <View style={s.infoChip}>
+            <View style={s.chipTop}>
+              <Ionicons name="person-outline" size={12} color={BRAND} />
+              <Text style={s.chipLabel}>Hành khách</Text>
+            </View>
+            <Text style={s.chipVal}>{last3(item.custPhone)}</Text>
+          </View>
+          <View style={s.infoChip}>
+            <View style={s.chipTop}>
+              <Ionicons name="card-outline" size={12} color={BRAND} />
+              <Text style={s.chipLabel}>Biển số</Text>
+            </View>
+            <Text style={s.chipVal}>{item.plate ? last3(item.plate) : '—'}</Text>
+          </View>
         </View>
-      </View>
 
-      <View style={s.sosRow}>
-        <Ionicons name="call-outline" size={13} color="#64748B" style={s.rowIcon} />
-        <Text style={s.sosLabel}>Tài xế</Text>
-        <Text style={s.sosValue}>{maskPhone(item.driverPhone)}</Text>
-        <Text style={s.sosSep}>·</Text>
-        <Text style={s.sosLabel}>Khách</Text>
-        <Text style={s.sosValue}>{maskPhone(item.custPhone)}</Text>
-      </View>
-
-      {!!item.plate && (
+        {/* Tọa độ */}
         <View style={s.sosRow}>
-          <Ionicons name="car-sport-outline" size={13} color="#64748B" style={s.rowIcon} />
-          <Text style={s.sosLabel}>Biển số</Text>
-          <Text style={[s.sosValue, { fontWeight: '700', color: BRAND }]}>{item.plate}</Text>
+          <Ionicons name="location-outline" size={13} color={BRAND} style={s.rowIcon} />
+          <Text style={s.sosLabel}>Tọa độ</Text>
+          <Text style={s.sosValue}>{item.lat.toFixed(5)}°, {item.lng.toFixed(5)}°</Text>
         </View>
-      )}
 
-      <View style={s.sosRow}>
-        <Ionicons name="location-outline" size={13} color="#64748B" style={s.rowIcon} />
-        <Text style={s.sosLabel}>Tọa độ</Text>
-        <Text style={s.sosValue}>
-          {item.lat.toFixed(5)}°, {item.lng.toFixed(5)}°
-        </Text>
+        {/* Kích hoạt bởi */}
+        <View style={[s.sosRow, { marginBottom: 10 }]}>
+          <Ionicons name="finger-print-outline" size={13} color={BRAND} style={s.rowIcon} />
+          <Text style={s.sosLabel}>Kích hoạt</Text>
+          <Text style={s.sosValue}>{triggerLabel}</Text>
+        </View>
+
+        <View style={s.sosBtnRow}>
+          <TouchableOpacity style={s.viewBtn} onPress={() => openMaps(item.lat, item.lng)} activeOpacity={0.8}>
+            <Ionicons name="map-outline" size={13} color={BRAND} />
+            <Text style={s.viewBtnText}>Bản đồ</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.viewBtn} onPress={() => openStellar(item.hash)} activeOpacity={0.8}>
+            <Ionicons name="open-outline" size={13} color={BRAND} />
+            <Text style={s.viewBtnText}>{t('blockchain.viewOnStellar')}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-
-      <Text style={s.hashText}>{shortHash(item.hash)}</Text>
-
-      <View style={s.sosBtnRow}>
-        <TouchableOpacity style={s.viewBtn} onPress={() => openStellar(item.hash)} activeOpacity={0.8}>
-          <Ionicons name="open-outline" size={13} color={BRAND} />
-          <Text style={s.viewBtnText}>{t('blockchain.viewOnStellar')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.viewBtn, { borderColor: '#FCA5A5' }]} onPress={() => openMaps(item.lat, item.lng)} activeOpacity={0.8}>
-          <Ionicons name="map-outline" size={13} color={SOS_RED} />
-          <Text style={[s.viewBtnText, { color: SOS_RED }]}>Bản đồ</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  )
+    )
+  }
 
   const isSos      = mode === 'sos'
   const listData   = isSos ? sosList : trips
@@ -419,14 +427,18 @@ headerTitle:  { fontSize: 16, fontWeight: '700', color: BRAND },
 
   // ── SOS card ─────────────────────────────────────────────────────────────
   sosCard:   { borderColor: '#FCA5A5', backgroundColor: '#FFFAFA' },
-  byBadge:   { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  byText:    { fontSize: 11, fontWeight: '700' },
-  sosRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 },
+
+  chipsRow:  { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  infoChip:  { flex: 1, alignItems: 'center', paddingHorizontal: 4, paddingVertical: 9, backgroundColor: BRAND_MUTED, borderRadius: 10, borderWidth: 1, borderColor: BRAND_LIGHT },
+  chipTop:   { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 5 },
+  chipLabel: { fontSize: 10, color: '#64748B', fontWeight: '600' },
+  chipVal:   { fontSize: 11, fontWeight: '700', color: BRAND, textAlign: 'center' },
+
+  sosRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 4 },
   rowIcon:   { marginRight: 2 },
   sosLabel:  { fontSize: 12, color: '#64748B', marginRight: 2 },
-  sosValue:  { fontSize: 12, color: '#0F172A', fontWeight: '600' },
-  sosSep:    { fontSize: 12, color: '#CBD5E1', marginHorizontal: 4 },
-  sosBtnRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  sosValue:  { fontSize: 12, color: BRAND, fontWeight: '600' },
+  sosBtnRow: { flexDirection: 'row', gap: 8 },
 
   // ── Common ───────────────────────────────────────────────────────────────
   center:    { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40, marginTop: 60 },

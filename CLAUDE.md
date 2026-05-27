@@ -6,14 +6,14 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-26 (session 37 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-27 (session 39 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
 
 - Config, types, constants, i18n (vi/en), services, hooks, utils ✅
 - Tất cả screens: auth, driver, customer, mining ✅
-- 10 Cloudflare Workers deployed ✅
+- 11 Cloudflare Workers deployed ✅
 - Firebase Rules deployed, EAS Build APK chạy được ✅
 - Customer home: 5-panel horizontal flow (Vehicle→Pickup→Dest→Book→Quotes) ✅
 - Driver flow: Stack navigation, online screen, settings, wallet, referral ✅
@@ -235,9 +235,39 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **`app/(driver)/home.tsx`** — `processPendingPenalty()` xử lý từng phần tử, giữ lại cái fail, xóa cái thành công, thông báo tổng số lần đã trừ
   - **`app/(driver)/trip.tsx`** — `handleOpenMaps()`: deep link `google.navigation:q=lat,lng&mode=X` — tự động chọn mode `l` (xe máy) hoặc `d` (ô tô) từ `driverInfo.vehicleType`; fallback web URL nếu không có Google Maps
 
-### Bàn giao Session 38 – Bắt đầu từ đây
+- **Session 38:** Security hardening — penalty attribution, cancel flag RTDB, OTP rate limiting ✅
+  - **Penalty ghi từ phía tài xế:** `blacklist_customers` chỉ cho tài xế ghi (`isDriver()` rule) — khách không thể tự thao túng bằng cách tắt mạng; Firestore rule đã deploy
+  - **`app/(driver)/trip.tsx`** — `handleCustomerCancelledAlert()`: ghi penalty cho khách (+1 bình thường, +2 nếu `pickedUpRef.current`) trước khi hiện alert; `handleAbandon()`: kiểm tra `cancelled_by_customer` RTDB flag — nếu set → khách đã hủy trước, tài xế là nạn nhân → ghi penalty cho khách thay vì phạt tài xế; chỉ xóa RTDB khi khách đã hủy trước
+  - **`app/(customer)/tracking.tsx`** — `handleCancel()`: ghi `cancelled_by_customer: true` lên RTDB trước khi gửi FCM; `statusPollRef` + proximity loop kiểm tra `cancelled_by_driver` RTDB flag làm backup khi FCM fail
+  - **Bỏ penalty phía khách:** xóa `LOCK_48H` (dùng đúng hằng), `_calcCancelPenalty()`, `_applyCustomerPenalty()`, import `incrementCustomerPenalty`/`setCustomerLockedUntil` khỏi `tracking.tsx`
+  - **RTDB rules:** thêm `cancelled_by_customer` + `cancelled_by_driver` (boolean, write-once true); `driver_at_pickup` đã có
+  - **Poll optimization** (`tracking.tsx`): `tryGetTripInfo()` chỉ fetch `driverPhone` + `driverFcmToken` (thông tin tài xế khác đã có từ TripQuote params); stop poll khi CẢ HAI field đã nhận được
+  - **Navigation params**: `home.tsx → tracking.tsx` truyền `driverName`, `vehicleBrand`, `vehicleColor`, `licensePlate` từ TripQuote; `initDriverInfo` set ngay từ params
+  - **OTP rate limiting** (chống xóa app + xác thực lại liên tục):
+    - Firestore collection `auth_log/{role}_{phone}` — lưu `verifiedAt` timestamp mỗi lần OTP thành công
+    - `checkAndRecordAuthLog(phone, role)` trong `firestore.ts` — chặn re-verify trong 24h cùng role
+    - `phone.tsx` — gọi check ngay sau `signInWithCredential`, `signOut` + alert nếu bị block
+    - Firestore rule: chỉ đúng số điện thoại Firebase của mình mới đọc/ghi; delete blocked
+    - **Worker 11** (`cloudflare-workers/cleanup-auth-log`): cron `0 20 * * *`, query `verifiedAt < now - 24h` → xóa expired docs; deployed ✅
+    - **i18n** vi/en: thêm `auth.rateLimitTitle` + `auth.rateLimitBody`
+    - **Secrets cần set:** `FIREBASE_SERVICE_ACCOUNT` + `FIREBASE_PROJECT_ID` cho Worker 11
 
-**Tình trạng:** Driver cancel flow hoàn chỉnh (double-tap fix, spinner UX, cancelling flag, pendingPenalty array, TH2 detection). Google Maps mở đúng mode xe. Chưa build lại APK.
+- **Session 39:** Freight UX cho customer flow ✅
+  - **Bước 1 & 2 (freight):** panel title đổi thành "Thông tin người giao/nhận hàng"; ô tên + SĐT (icon `person-outline` + `call-outline`, màu BRAND) nằm **trên** ô địa chỉ; bookmark `flex:1` fill phần còn lại tự nhiên
+  - **Chip "Vị trí hiện tại":** thay nút locate floating trên map; luôn là chip đầu tiên, không có X, sáng lên mặc định khi vào bước 1; selected state = nền BRAND/chữ trắng
+  - **Ô địa chỉ:** thêm nút X xóa nhanh khi có text; icon địa chỉ thu nhỏ về `size=14` đồng đều với freight icons
+  - **Bước 3 (freight):** title "Xác nhận thông tin giao nhận hàng"; page 2 hiện người giao/nhận dạng `Tên – SĐT` trên 1 dòng
+  - **`database.rules.json`:** thêm node `freight_info` (write-once); fix regex vehicleType thêm `truck`
+  - **`handleSelectDriver()`:** ghi `freight_info` lên RTDB trước khi notify tài xế được chọn (privacy)
+  - **`app/(driver)/trip.tsx`:** tài xế freight thấy trang vuốt ngang page 2 với thông tin người giao/nhận + nút gọi điện
+  - **Polish:** xóa `autoFocus` khỏi DestPanel (bàn phím không tự bật khi chuyển bước); swipe hint đổi "Vuốt sang" → "Vuốt qua phải"
+
+### Bàn giao Session 40 – Bắt đầu từ đây
+
+**Tình trạng:** Freight UX hoàn chỉnh. Security hardening session 38 OK. Chưa set secrets Worker 11, chưa build APK.
+
+**Việc cần làm ngay:**
+- [ ] Set secrets Worker 11: `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` + `FIREBASE_PROJECT_ID` trong `cloudflare-workers/cleanup-auth-log/`
 
 ### Việc cần làm tiếp theo
 
@@ -458,6 +488,7 @@ db.collection("drivers")
 | 9 | Cron 3h sáng UTC+7 | Dọn blacklist_customers đã hết hạn >72h |
 | 10 | POST /api/sos-alert | Ghi SOS lên Stellar: Distributor → SOS wallet, 27-byte memo (lat/lng/SĐT/ai nhấn) |
 | 10 | POST /api/notify-cancel | FCM thông báo hủy chuyến đến bên kia (tài xế hoặc khách) |
+| 11 | Cron 3h sáng UTC+7 | Xóa `auth_log` records có `verifiedAt > 24h` trên Firestore |
 
 **Secrets:** `STELLAR_ISSUER_PRIVATE_KEY`, `STELLAR_DISTRIBUTOR_PRIVATE_KEY`, `STELLAR_FEEBUMP_PRIVATE_KEY`, `STELLAR_ISSUER_ADDRESS`, `STELLAR_DISTRIBUTOR_ADDRESS`, `STELLAR_TRANSACTION_ADDRESS`, `STELLAR_SOS_ADDRESS`, `STELLAR_SOS_PRIVATE_KEY`, `FIREBASE_SERVICE_ACCOUNT`, `MASTER_ENCRYPTION_KEY`, `CLOUDFLARE_TURN_KEY_ID`
 

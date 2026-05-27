@@ -129,7 +129,7 @@ export default function DriverInfoScreen() {
         vehicleType,
         transportModel,
         vehicleBrand:  vehicleBrand.trim().toUpperCase(),
-        vehicleColor:  vehicleColor.trim().replace(/\b\w/g, c => c.toUpperCase()),
+        vehicleColor:  vehicleColor.trim(),
         licensePlate:  licensePlate.trim().toUpperCase(),
       }
       if (newAvatarUrl != null) fields.avatarUrl = newAvatarUrl
@@ -299,7 +299,7 @@ export default function DriverInfoScreen() {
             placeholder={t('register.colorPlaceholder')}
             placeholderTextColor="#94A3B8"
             value={vehicleColor}
-            onChangeText={v => setVehicleColor(v.replace(/(?:^|\s)\S/g, c => c.toUpperCase()))}
+            onChangeText={setVehicleColor}
             autoCapitalize="words"
           />
         </View>

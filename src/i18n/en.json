@@ -51,7 +51,9 @@
     "otpPlaceholder":   "Enter 6-digit code",
     "verifying":        "Verifying...",
     "resendOTP":        "Resend OTP",
-    "resendIn":         "Resend in {{seconds}}s"
+    "resendIn":         "Resend in {{seconds}}s",
+    "rateLimitTitle":   "Too many verification attempts",
+    "rateLimitBody":    "This phone number was verified recently. Please try again in {{hours}} hours."
   },
   "terms": {
     "title":       "Terms of Service",
@@ -210,6 +212,7 @@
     "bookRide":         "FIND MY DRIVER",
     "selectVehicleTitle": "Select transport type and vehicle",
     "bookTitle":          "Confirm pickup & destination",
+    "bookTitleFreight":   "Confirm freight delivery info",
     "vehicleScrollHint":  "Swipe to see more",
     "note":             "Note for driver",
     "notePlaceholder":  "E.g. Standing in front of the blue gate... (optional)",
@@ -234,7 +237,27 @@
     "waitForRating":         "Waiting for passenger to rate...",
     "firstTripTitle":        "First trip completed!",
     "firstTripBonus":        "You've just completed your first trip on OpenDrive.\n\nOpenDrive has rewarded you with 10 ODC as a welcome gift.\nKeep up the great work — the community needs you!",
-    "trips":                 "trips"
+    "trips":                 "trips",
+    "swipeForNote":               "Swipe to add a note for your driver →",
+    "swipeForInfoAndNote":        "Swipe to view info & note for driver →",
+    "currentLocation":            "Current location",
+    "stepPickupFreight":          "Sender Information",
+    "stepDestFreight":            "Recipient Information",
+    "pickupFreightPlaceholder":   "Enter cargo pickup address",
+    "destFreightPlaceholder":     "Enter delivery address",
+    "confirmPickupFreight":       "Confirm Pickup Point",
+    "confirmDestFreight":         "Confirm Delivery Point",
+    "pickupLabelFreight":         "Cargo Pickup",
+    "destLabelFreight":           "Delivery Point",
+    "senderInfo":                 "Sender name & phone number",
+    "senderNamePlaceholder":      "Sender full name",
+    "senderPhonePlaceholder":     "Phone number",
+    "recipientInfo":              "Recipient name & phone number",
+    "recipientNamePlaceholder":   "Recipient full name",
+    "recipientPhonePlaceholder":  "Phone number",
+    "senderLabel":                "Sender",
+    "recipientLabel":             "Recipient",
+    "freightContactsPage":        "Delivery Contacts"
   },
   "cancel": {
     "title":             "Cancel trip",
@@ -245,18 +268,26 @@
     "no":                "Keep trip",
     "driverCancelled":   "Driver cancelled the trip",
     "driverCancelledBy": "{{name}} cancelled your trip",
-    "customerCancelled": "Customer cancelled the trip"
+    "customerCancelled": "Customer cancelled the trip",
+    "abandonHasQuotes":  "Drivers have already quoted. Sure you want to cancel?"
   },
   "lock": {
     "title":   "Account temporarily locked",
     "reason": {
       "cancelTrip":       "You cancelled an ongoing trip",
-      "fraudDetected":    "Suspicious activity detected",
+      "fraud":            "Suspicious activity detected",
       "lowRating":        "Rating too low",
-      "frequentCancel":   "Frequent cancellations affecting drivers"
+      "frequentCancel":   "You have cancelled trips multiple times in a short period, affecting drivers"
     },
-    "unlockIn": "Unlocks in: {{time}}",
-    "unlocked": "Account unlocked"
+    "subtitle":    "Your account is temporarily restricted",
+    "unlockAfter": "UNLOCKS IN",
+    "hours":       "Hours",
+    "minutes":     "Minutes",
+    "seconds":     "Seconds",
+    "note":        "Account automatically unlocks when time expires.\nAvoid cancelling trips repeatedly to prevent future locks.",
+    "logout":      "Sign out / Switch role",
+    "unlockIn":    "Unlocks in: {{time}}",
+    "unlocked":    "Account unlocked"
   },
   "pending": {
     "title":      "You have an incomplete trip",

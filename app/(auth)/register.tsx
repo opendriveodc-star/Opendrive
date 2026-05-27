@@ -175,7 +175,7 @@ export default function RegisterScreen() {
         vehicleType,
         transportModel,
         vehicleBrand:   vehicleBrand.trim(),
-        vehicleColor:   vehicleColor.trim().replace(/\b\w/g, c => c.toUpperCase()),
+        vehicleColor:   vehicleColor.trim(),
         licensePlate:   licensePlate.trim().toUpperCase(),
         avatarUrl,
         stellarWallet,
@@ -198,7 +198,7 @@ export default function RegisterScreen() {
         vehicleType,
         transportModel,
         vehicleBrand:        vehicleBrand.trim(),
-        vehicleColor:        vehicleColor.trim().toUpperCase(),
+        vehicleColor:        vehicleColor.trim(),
         licensePlate:        licensePlate.trim().toUpperCase(),
         avatarUrl:           avatarUrl ?? null,
         stellarWallet,
@@ -401,7 +401,7 @@ export default function RegisterScreen() {
             placeholder={t('register.colorPlaceholder')}
             placeholderTextColor="#94A3B8"
             value={vehicleColor}
-            onChangeText={v => setVehicleColor(v.replace(/(?:^|\s)\S/g, c => c.toUpperCase()))}
+            onChangeText={setVehicleColor}
             autoCapitalize="words"
           />
         </View>

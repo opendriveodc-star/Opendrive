@@ -61,16 +61,16 @@ service cloud.firestore {
     }
 
     match /blacklist_customers/{phone} {
-      // Tài xế đọc được để kiểm tra khách trước khi nhận chuyến
+      // Tài xế đọc/ghi — tài xế là người báo cáo hành vi khách hủy chuyến
       allow read: if isDriver();
-      // Client tạo mới (lần đầu bị phạt)
-      allow create: if isLoggedIn()
+      // Tài xế tạo mới khi khách bị phạt lần đầu
+      allow create: if isDriver()
         && request.resource.data.phone == phone
         && request.resource.data.cancelCount is int
         && request.resource.data.cancelCount >= 1
         && request.resource.data.cancelCount <= 2;
-      // Client cập nhật: chỉ được tăng cancelCount hoặc set lockedUntil
-      allow update: if isLoggedIn()
+      // Tài xế cập nhật: chỉ được tăng cancelCount tối đa +2 mỗi lần
+      allow update: if isDriver()
         && request.resource.data.phone == resource.data.phone
         && request.resource.data.cancelCount >= resource.data.cancelCount
         && (request.resource.data.cancelCount - resource.data.cancelCount) <= 2;
@@ -92,6 +92,16 @@ service cloud.firestore {
       // Sửa: client KHÔNG được tự sửa points (chỉ Worker Admin SDK mới cộng điểm)
       allow update: if false;
 
+      allow delete: if false;
+    }
+
+    match /auth_log/{docId} {
+      // Chỉ đúng số điện thoại đã xác thực mới đọc/ghi record của mình
+      allow read, write: if isLoggedIn() && (
+        docId == ('customer_' + request.auth.token.phone_number) ||
+        docId == ('driver_'   + request.auth.token.phone_number) ||
+        docId == ('miner_'    + request.auth.token.phone_number)
+      );
       allow delete: if false;
     }
 

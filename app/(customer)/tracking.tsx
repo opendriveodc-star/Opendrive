@@ -17,12 +17,10 @@ import { notifyCancel, sosAlert } from '../../src/services/cloudflare'
 import { getCurrentLocation, distanceKm } from '../../src/services/location'
 import { encodeSosMemo } from '../../src/services/odc'
 import SosButton from '../../src/components/SosButton'
-import { incrementCustomerPenalty, setCustomerLockedUntil } from '../../src/services/firestore'
 import { SecureStoreKey } from '../../src/types'
 import type { CustomerInfo, TripRealtimeInfo } from '../../src/types'
 
 const RETRY_TRIP_KEY = 'retry_trip_data'
-const LOCK_72H = 72 * 60 * 60 * 1000
 
 const BRAND         = '#1A2E5E'
 const SOS_SECTION_H = 220
@@ -38,12 +36,19 @@ const STATUS_CONFIG: Record<TripStatus, { label: string; icon: string }> = {
 export default function TrackingScreen() {
   const { t }      = useTranslation()
   const insets     = useSafeAreaInsets()
-  const { tripId } = useLocalSearchParams<{ tripId: string }>()
+  const { tripId, driverName, vehicleBrand, vehicleColor, licensePlate } = useLocalSearchParams<{
+    tripId: string; driverName: string; vehicleBrand: string; vehicleColor: string; licensePlate: string
+  }>()
+
+  // Khởi tạo ngay từ params — không cần chờ poll trip_info
+  const initDriverInfo = driverName
+    ? { name: driverName, licensePlate: licensePlate ?? '', vehicleBrand: vehicleBrand ?? '', vehicleColor: vehicleColor ?? '' }
+    : null
 
   const [driverLat,  setDriverLat]  = useState<number>(10.7769)
   const [driverLng,  setDriverLng]  = useState<number>(106.7009)
   const [tripStatus, setTripStatus] = useState<TripStatus>('going_to_pickup')
-  const [driverInfo, setDriverInfo] = useState<{ name: string; licensePlate: string; vehicleBrand: string; vehicleColor: string } | null>(null)
+  const [driverInfo, setDriverInfo] = useState(initDriverInfo)
   const [canCancel,    setCanCancel]    = useState(true)
   const [sosSent,      setSosSent]      = useState(false)
   const [driverPhone,  setDriverPhone]  = useState<string>('')
@@ -57,7 +62,7 @@ export default function TrackingScreen() {
   const pickupLatRef       = useRef<number | null>(null)
   const pickupLngRef       = useRef<number | null>(null)
   const tripInfoRef        = useRef<TripRealtimeInfo | null>(null)
-  const driverInfoRef      = useRef<{ name: string; licensePlate: string; vehicleBrand: string; vehicleColor: string } | null>(null)
+  const driverInfoRef      = useRef(initDriverInfo)
   const driverArrivedRef   = useRef(false)
   const arrivedNotifIdRef  = useRef<string | null>(null)
   const driverFcmTokenRef  = useRef<string>('')
@@ -133,6 +138,13 @@ export default function TrackingScreen() {
 
     statusPollRef.current = setInterval(async () => {
       try {
+        // Backup: phát hiện tài xế hủy nếu FCM không đến
+        const driverCancelled = await rtdb.get<boolean>(`trips/${tripId}/cancelled_by_driver`)
+        if (driverCancelled === true && !cancelledHandledRef.current) {
+          clearAllPolls()
+          handleDriverCancelledAlert()
+          return
+        }
         const status = await rtdb.get<string>(`trips/${tripId}/trip_status`)
         if (status === 'picked_up') {
           setTripStatus('picked_up')
@@ -147,17 +159,16 @@ export default function TrackingScreen() {
 
     const tryGetTripInfo = async () => {
       try {
-        const info = await rtdb.get<{
-          driverName: string; licensePlate: string; vehicleBrand: string
-          vehicleColor?: string; driverPhone?: string; driverFcmToken?: string
-        }>(`trips/${tripId}/trip_info`)
-        if (info?.driverName) {
-          const di = { name: info.driverName, licensePlate: info.licensePlate, vehicleBrand: info.vehicleBrand, vehicleColor: info.vehicleColor ?? '' }
-          setDriverInfo(di)
-          driverInfoRef.current = di
-          if (info.driverPhone) { setDriverPhone(info.driverPhone); driverPhoneRef.current = info.driverPhone }
-          if (info.driverFcmToken) driverFcmTokenRef.current = info.driverFcmToken
-          if (infoPollRef.current) { clearInterval(infoPollRef.current); infoPollRef.current = null }
+        const info = await rtdb.get<{ driverPhone?: string; driverFcmToken?: string }>(`trips/${tripId}/trip_info`)
+        if (info?.driverPhone) {
+          setDriverPhone(info.driverPhone)
+          driverPhoneRef.current = info.driverPhone
+        }
+        if (info?.driverFcmToken) driverFcmTokenRef.current = info.driverFcmToken
+        // Dừng poll khi có đủ cả hai — driver ghi trip_info 1 lần nguyên khối
+        if (info?.driverPhone && info?.driverFcmToken && infoPollRef.current) {
+          clearInterval(infoPollRef.current)
+          infoPollRef.current = null
         }
       } catch {}
     }
@@ -270,6 +281,15 @@ export default function TrackingScreen() {
 
     const check = setInterval(async () => {
       if (completedRef.current) { clearInterval(check); return }
+      // Backup: tài xế hủy sau khi đón khách
+      try {
+        const driverCancelled = await rtdb.get<boolean>(`trips/${tripId}/cancelled_by_driver`)
+        if (driverCancelled === true && !cancelledHandledRef.current) {
+          clearInterval(check)
+          handleDriverCancelledAlert()
+          return
+        }
+      } catch {}
       const dropLat = tripInfoRef.current?.dropLat
       const dropLng = tripInfoRef.current?.dropLng
       if (!dropLat || !dropLng) return
@@ -313,6 +333,8 @@ export default function TrackingScreen() {
         onPress: async () => {
           cancelledHandledRef.current = true
           clearAllPolls()
+          // Đánh dấu RTDB — tài xế đọc được nếu FCM không đến
+          if (tripId) rtdb.set(`trips/${tripId}/cancelled_by_customer`, true).catch(() => {})
           // Notify tài xế qua FCM
           if (tripId && driverFcmTokenRef.current) {
             notifyCancel(tripId, 'customer', driverFcmTokenRef.current).catch(() => {})
@@ -334,42 +356,10 @@ export default function TrackingScreen() {
             })).catch(() => {})
           }
 
-          // Tính penalty
-          const penaltyAmount = _calcCancelPenalty()
-          if (penaltyAmount > 0) await _applyCustomerPenalty(penaltyAmount)
-
           router.replace('/(customer)/home')
         },
       },
     ])
-  }
-
-  function _calcCancelPenalty(): number {
-    // Tài xế đã bấm "đã đến điểm đón" → phạt 2
-    if (driverArrivedRef.current) return 2
-    // Mọi trường hợp hủy còn lại → phạt 1
-    return 1
-  }
-
-  async function _applyCustomerPenalty(amount: number) {
-    try {
-      const raw = await SecureStore.getItemAsync(SecureStoreKey.CUSTOMER_INFO)
-      if (!raw) return
-      const info: CustomerInfo = JSON.parse(raw)
-      const newCount = await incrementCustomerPenalty(info.phone, amount)
-      const updated = { ...info, cancelCount: newCount }
-      await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_INFO, JSON.stringify(updated))
-      if (newCount >= 3) {
-        const lockUntil = Date.now() + LOCK_48H
-        await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL, String(lockUntil))
-        setCustomerLockedUntil(info.phone, lockUntil).catch(() => {})
-        showAlert(
-          t('lock.title'),
-          t('lock.reason.frequentCancel'),
-          [{ text: 'OK', onPress: () => router.replace({ pathname: '/lock-screen', params: { lockedUntil: String(lockUntil), reason: 'frequentCancel' } }) }],
-        )
-      }
-    } catch {}
   }
 
   const statusCfg = STATUS_CONFIG[tripStatus]

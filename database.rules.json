@@ -5,7 +5,7 @@
         "info": {
           ".read":     "auth != null",
           ".write":    "auth != null && !data.exists()",
-          ".validate": "newData.hasChildren(['customerPhone', 'pickupGeohash', 'dropGeohash', 'vehicleType', 'createdAt']) && newData.child('vehicleType').val().matches(/^(motorbike|car4|car6|pickup)$/) && newData.child('createdAt').isNumber()"
+          ".validate": "newData.hasChildren(['customerPhone', 'pickupGeohash', 'dropGeohash', 'vehicleType', 'createdAt']) && newData.child('vehicleType').val().matches(/^(motorbike|car4|car6|pickup|truck)$/) && newData.child('createdAt').isNumber()"
         },
         "quotes": {
           ".read": "auth != null",
@@ -33,6 +33,26 @@
           ".read":     "auth != null",
           ".write":    "auth != null",
           ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 5"
+        },
+        "driver_at_pickup": {
+          ".read":     "auth != null",
+          ".write":    "auth != null",
+          ".validate": "newData.isBoolean() && newData.val() == true"
+        },
+        "cancelled_by_customer": {
+          ".read":     "auth != null",
+          ".write":    "auth != null",
+          ".validate": "newData.isBoolean() && newData.val() == true"
+        },
+        "cancelled_by_driver": {
+          ".read":     "auth != null",
+          ".write":    "auth != null",
+          ".validate": "newData.isBoolean() && newData.val() == true"
+        },
+        "freight_info": {
+          ".read":     "auth != null",
+          ".write":    "auth != null && !data.exists()",
+          ".validate": "newData.hasChildren(['senderName', 'senderPhone', 'recipientName', 'recipientPhone'])"
         },
         ".write": "auth != null && !newData.exists()"
       }

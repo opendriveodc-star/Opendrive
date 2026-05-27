@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons'
 import MapViewComponent, { type MapViewHandle } from '../../src/components/MapView'
 import QuoteList from '../../src/components/QuoteList'
 import { rtdb } from '../../src/services/firebase'
+import { incrementCustomerPenalty } from '../../src/services/firestore'
 import { notifyDrivers, notifySelectedDriver } from '../../src/services/cloudflare'
 import {
   getCurrentLocation, reverseGeocode, searchAddresses,
@@ -22,7 +23,7 @@ import {
 } from '../../src/services/location'
 import { isOnWifi } from '../../src/services/network'
 import NetworkAlert from '../../src/components/NetworkAlert'
-import type { CustomerInfo, VehicleType, TripQuote } from '../../src/types'
+import type { CustomerInfo, VehicleType, TripQuote, FreightInfo } from '../../src/types'
 import { SecureStoreKey } from '../../src/types'
 import { TRANSPORT_MODELS } from '../../src/data/vehicles'
 import type { TransportModel } from '../../src/data/vehicles'
@@ -35,7 +36,7 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window')
 
 // Sheet snap levels
 const HANDLE_H  = 52
-const PARTIAL_H = Math.min(Math.round(SCREEN_H * 0.46), 380)
+const PARTIAL_H = 380
 const FULL_H    = Math.round(SCREEN_H * 0.72)
 
 // translateY values for each snap level (sheet container is FULL_H tall, bottom-anchored)
@@ -80,6 +81,10 @@ export default function CustomerHomeScreen() {
   const [note,             setNote]             = useState('')
   const [vehicle,          setVehicle]          = useState<VehicleType>('motorbike')
   const [transportModel,   setTransportModel]   = useState<TransportModel>('passenger')
+  const [senderName,       setSenderName]       = useState('')
+  const [senderPhone,      setSenderPhone]      = useState('')
+  const [recipientName,    setRecipientName]    = useState('')
+  const [recipientPhone,   setRecipientPhone]   = useState('')
   const [distKm,           setDistKm]           = useState<number | null>(null)
   const [savedLocs,        setSavedLocs]        = useState<SavedLoc[]>([])
   const [bookLoading,      setBookLoading]      = useState(false)
@@ -95,14 +100,16 @@ export default function CustomerHomeScreen() {
   const [searchFailed,     setSearchFailed]     = useState(false)
   const [countdown,        setCountdown]        = useState(25)
   const [sheetLevel,       setSheetLevel]       = useState<0|1|2>(1)
+  const [contentLevel,     setContentLevel]     = useState<0|1|2>(1)
 
-  const mapRef         = useRef<MapViewHandle>(null)
-  const panelX         = useRef(new Animated.Value(0)).current
-  const sheetY         = useRef(new Animated.Value(SNAP_Y[1])).current
-  const isAnimating    = useRef(false)
-  const stepRef        = useRef<Step>(0)
-  const retryPickupRef = useRef<{ lat: number; lng: number } | null>(null)
-  const sheetLvlRef  = useRef<0|1|2>(1)
+  const mapRef          = useRef<MapViewHandle>(null)
+  const panelX          = useRef(new Animated.Value(0)).current
+  const sheetY          = useRef(new Animated.Value(SNAP_Y[1])).current
+  const isAnimating     = useRef(false)
+  const stepRef         = useRef<Step>(0)
+  const retryPickupRef  = useRef<{ lat: number; lng: number } | null>(null)
+  const sheetLvlRef     = useRef<0|1|2>(1)
+  const contentLevelRef = useRef<0|1|2>(1)
   const progPan      = useRef(false)
   const mapCenter    = useRef<{ lat: number; lng: number }>({ lat: INIT_LAT, lng: INIT_LNG })
   const revTimer     = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -150,6 +157,11 @@ export default function CustomerHomeScreen() {
     return () => { clearInterval(timer); pollRef.current = null }
   }, [step, activeTripId])
 
+  // panelContent height: step 4 level 2 expands to fill full sheet, others fixed
+  const panelContentH = step === 4 && contentLevel === 2
+    ? FULL_H - HANDLE_H
+    : PARTIAL_H - HANDLE_H
+
   // ── Sheet padding helpers ──────────────────────────────────────────────────
   function visiblePad(level: 0|1|2) {
     const panelH = level === 0 ? HANDLE_H : level === 1 ? PARTIAL_H : FULL_H
@@ -162,15 +174,28 @@ export default function CustomerHomeScreen() {
   }
 
   function snapToLevel(level: 0|1|2) {
+    const prevLevel = contentLevelRef.current
     sheetLvlRef.current = level
     setSheetLevel(level)
+    // Collapse: shrink panelContent immediately so layout stays correct during animation
+    if (level < prevLevel) {
+      contentLevelRef.current = level
+      setContentLevel(level)
+    }
     Animated.spring(sheetY, {
       toValue: SNAP_Y[level],
       useNativeDriver: true,
       tension: 68,
       friction: 12,
-    }).start()
+    }).start(() => {
+      // Expand: grow panelContent after sheet reaches new position
+      if (level > prevLevel) {
+        contentLevelRef.current = level
+        setContentLevel(level)
+      }
+    })
     mapRef.current?.setCrosshairPosition(crosshairFrac(level))
+    panTo(mapCenter.current.lat, mapCenter.current.lng, level)
   }
 
   // PanResponder for sheet drag handle
@@ -179,18 +204,20 @@ export default function CustomerHomeScreen() {
     onMoveShouldSetPanResponder: (_, g) =>
       Math.abs(g.dy) > 4 && Math.abs(g.dy) > Math.abs(g.dx),
     onPanResponderMove: (_, g) => {
-      const maxLvl = stepRef.current === 4 ? 2 : 1
-      const base = SNAP_Y[sheetLvlRef.current]
-      const next = Math.max(SNAP_Y[maxLvl], Math.min(SNAP_Y[0], base + g.dy))
+      const isStep4 = stepRef.current === 4
+      const maxLvl  = isStep4 ? 2 : 1
+      const minLvl  = isStep4 ? 1 : 0
+      const base    = SNAP_Y[sheetLvlRef.current]
+      const next    = Math.max(SNAP_Y[maxLvl], Math.min(SNAP_Y[minLvl], base + g.dy))
       sheetY.setValue(next)
     },
     onPanResponderRelease: (_, g) => {
-      const maxLvl = stepRef.current === 4 ? 2 : 1
-      const base   = SNAP_Y[sheetLvlRef.current]
-      const projY  = base + g.dy + g.vy * 120
-      const lvls   = maxLvl === 1 ? ([0, 1] as const) : ([0, 1, 2] as const)
-      const dists  = lvls.map(l => ({ l, d: Math.abs(SNAP_Y[l] - projY) }))
-      const target = dists.reduce((a, b) => a.d < b.d ? a : b).l
+      const isStep4 = stepRef.current === 4
+      const base    = SNAP_Y[sheetLvlRef.current]
+      const projY   = base + g.dy + g.vy * 120
+      const lvls    = isStep4 ? ([1, 2] as const) : ([0, 1] as const)
+      const dists   = lvls.map(l => ({ l, d: Math.abs(SNAP_Y[l] - projY) }))
+      const target  = dists.reduce((a, b) => a.d < b.d ? a : b).l
       snapToLevel(target)
     },
   })).current
@@ -275,7 +302,7 @@ export default function CustomerHomeScreen() {
     if (lockRaw) {
       const lockTs = parseInt(lockRaw)
       if (lockTs > Date.now()) {
-        router.replace({ pathname: '/lock-screen', params: { lockedUntil: lockRaw, reason: t('lock.reason.frequentCancel') } })
+        router.replace({ pathname: '/lock-screen', params: { lockedUntil: lockRaw, reason: 'frequentCancel' } })
         return
       } else {
         SecureStore.deleteItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL).catch(() => {})
@@ -366,11 +393,19 @@ export default function CustomerHomeScreen() {
 
   function confirmPickup() {
     if (!pickup) { showAlert(t('common.error'), t('trip.pickupPlaceholder')); return }
+    if (transportModel === 'freight') {
+      if (!senderName.trim())  { showAlert(t('common.error'), 'Vui lòng nhập tên người giao hàng'); return }
+      if (!senderPhone.trim()) { showAlert(t('common.error'), 'Vui lòng nhập số điện thoại người giao hàng'); return }
+    }
     goToStep(2)
   }
 
   async function confirmDest() {
     if (!dest) { showAlert(t('common.error'), t('trip.destPlaceholder')); return }
+    if (transportModel === 'freight') {
+      if (!recipientName.trim())  { showAlert(t('common.error'), 'Vui lòng nhập tên người nhận hàng'); return }
+      if (!recipientPhone.trim()) { showAlert(t('common.error'), 'Vui lòng nhập số điện thoại người nhận hàng'); return }
+    }
     goToStep(3)
     if (pickup) {
       try {
@@ -380,20 +415,60 @@ export default function CustomerHomeScreen() {
     }
   }
 
+  async function doLogout() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    if (activeTripId) await rtdb.delete(`trips/${activeTripId}`).catch(() => {})
+    mapRef.current?.hideDriverMarker()
+    await SecureStore.deleteItemAsync(SecureStoreKey.CUSTOMER_INFO).catch(() => {})
+    await SecureStore.deleteItemAsync(SecureStoreKey.USER_ROLE).catch(() => {})
+    router.replace('/role-select')
+  }
+
+  async function applyPenaltyThenRun(onDone: () => void) {
+    try {
+      const raw = await SecureStore.getItemAsync(SecureStoreKey.CUSTOMER_INFO)
+      if (!raw) { onDone(); return }
+      const info: CustomerInfo = JSON.parse(raw)
+      const storedRaw  = await SecureStore.getItemAsync(SecureStoreKey.CUSTOMER_CANCEL_COUNT).catch(() => null)
+      const localCount = storedRaw ? parseFloat(storedRaw) : 0
+      const newLocal   = localCount + 0.5
+      await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_CANCEL_COUNT, String(newLocal)).catch(() => {})
+      const newCount = await incrementCustomerPenalty(info.phone, 0.5).catch(() => newLocal)
+      if (newCount >= 3) {
+        const lockUntil = Date.now() + 48 * 60 * 60 * 1000
+        await SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_LOCK_UNTIL, String(lockUntil)).catch(() => {})
+        // cleanup trip trước rồi lock
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+        if (activeTripId) await rtdb.delete(`trips/${activeTripId}`).catch(() => {})
+        router.replace({ pathname: '/lock-screen', params: { lockedUntil: String(lockUntil), reason: 'frequentCancel' } })
+        return
+      }
+    } catch {}
+    onDone()
+  }
+
   function handleLogout() {
+    // Bước 4 đã có báo giá → cảnh báo + penalty trước khi logout
+    if (stepRef.current === 4 && quotesRef.current.length > 0) {
+      showAlert(
+        t('cancel.title'),
+        t('cancel.abandonHasQuotes'),
+        [
+          { text: t('cancel.no'), style: 'cancel' },
+          {
+            text: t('settings.logout'), style: 'destructive',
+            onPress: () => applyPenaltyThenRun(doLogout),
+          },
+        ],
+      )
+      return
+    }
     showAlert(
       t('settings.logout'),
       t('settings.logoutConfirm'),
       [
         { text: t('common.cancel'), style: 'cancel' },
-        {
-          text: t('settings.logout'), style: 'destructive',
-          onPress: async () => {
-            await SecureStore.deleteItemAsync(SecureStoreKey.CUSTOMER_INFO).catch(() => {})
-            await SecureStore.deleteItemAsync(SecureStoreKey.USER_ROLE).catch(() => {})
-            router.replace('/role-select')
-          },
-        },
+        { text: t('settings.logout'), style: 'destructive', onPress: doLogout },
       ],
     )
   }
@@ -477,22 +552,56 @@ export default function CustomerHomeScreen() {
 
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     try {
+      if (transportModel === 'freight') {
+        const fi: FreightInfo = {
+          senderName:    senderName.trim(),
+          senderPhone:   senderPhone.trim(),
+          recipientName: recipientName.trim(),
+          recipientPhone: recipientPhone.trim(),
+        }
+        await rtdb.set(`trips/${activeTripId}/freight_info`, fi).catch(() => {})
+      }
       await notifySelectedDriver(activeTripId, quote.driverUid)
       router.push({
         pathname: '/(customer)/tracking',
-        params: { tripId: activeTripId, driverUid: quote.driverUid },
+        params: {
+          tripId:       activeTripId,
+          driverUid:    quote.driverUid,
+          driverName:   quote.driverName,
+          vehicleBrand: quote.vehicleBrand,
+          vehicleColor: quote.vehicleColor,
+          licensePlate: quote.licensePlate,
+        },
       })
     } catch (e: unknown) {
       showAlert(t('common.error'), (e as Error).message)
     }
   }
 
-  async function handleCancelSearch() {
+  async function cancelSearchCleanup() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     if (activeTripId) await rtdb.delete(`trips/${activeTripId}`).catch(() => {})
     mapRef.current?.hideDriverMarker()
     setActiveTripId(null); setQuotes([]); setSearchFailed(false)
     goToStep(3)
+  }
+
+  function handleCancelSearch() {
+    if (quotesRef.current.length === 0) {
+      cancelSearchCleanup()
+      return
+    }
+    showAlert(
+      t('cancel.title'),
+      t('cancel.abandonHasQuotes'),
+      [
+        { text: t('cancel.no'), style: 'cancel' },
+        {
+          text: t('cancel.yes'), style: 'destructive',
+          onPress: () => applyPenaltyThenRun(cancelSearchCleanup),
+        },
+      ],
+    )
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -542,16 +651,6 @@ export default function CustomerHomeScreen() {
         </TouchableOpacity>
       </SafeAreaView>
 
-      {/* Locate button – only for pickup/dest steps */}
-      {(step === 1 || step === 2) && (
-        <TouchableOpacity
-          style={[styles.locateBtn, { top: topBarH + 8 }]}
-          onPress={fetchCurrentLocation}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="locate" size={20} color={BRAND} />
-        </TouchableOpacity>
-      )}
 
       {/* Sheet – full-width, bottom-anchored, slide levels */}
       <Animated.View style={[styles.sheet, { transform: [{ translateY: sheetY }] }]}>
@@ -561,7 +660,7 @@ export default function CustomerHomeScreen() {
         </View>
 
         {/* Content – horizontally animated between steps */}
-        <Animated.View style={[styles.panelContent, { transform: [{ translateX: panelX }] }]}>
+        <Animated.View style={[styles.panelContent, { height: panelContentH }, { transform: [{ translateX: panelX }] }]}>
           {step === 0 && (
             <VehiclePanel
               vehicle={vehicle}
@@ -581,6 +680,7 @@ export default function CustomerHomeScreen() {
             <PickupPanel
               text={pickupText}
               onChangeText={handlePickupType}
+              onClear={() => { setPickupText(''); setPickupSugg([]) }}
               savedLocs={savedLocs}
               onSelectSaved={selectSavedLoc}
               onRemoveSaved={handleRemoveSaved}
@@ -589,7 +689,13 @@ export default function CustomerHomeScreen() {
               onConfirm={confirmPickup}
               onBack={handleBack}
               onSave={openSaveModal}
+              onLocate={fetchCurrentLocation}
               insetBottom={insets.bottom}
+              transportModel={transportModel}
+              senderName={senderName}
+              senderPhone={senderPhone}
+              onSenderNameChange={setSenderName}
+              onSenderPhoneChange={setSenderPhone}
               t={t}
             />
           )}
@@ -597,6 +703,7 @@ export default function CustomerHomeScreen() {
             <DestPanel
               text={destText}
               onChangeText={handleDestType}
+              onClear={() => { setDestText(''); setDestSugg([]) }}
               savedLocs={savedLocs}
               onSelectSaved={selectSavedLoc}
               onRemoveSaved={handleRemoveSaved}
@@ -605,7 +712,13 @@ export default function CustomerHomeScreen() {
               onConfirm={confirmDest}
               onBack={handleBack}
               onSave={openSaveModal}
+              onLocate={fetchCurrentLocation}
               insetBottom={insets.bottom}
+              transportModel={transportModel}
+              recipientName={recipientName}
+              recipientPhone={recipientPhone}
+              onRecipientNameChange={setRecipientName}
+              onRecipientPhoneChange={setRecipientPhone}
               t={t}
             />
           )}
@@ -620,6 +733,11 @@ export default function CustomerHomeScreen() {
               loading={bookLoading}
               onBack={handleBack}
               insetBottom={insets.bottom}
+              transportModel={transportModel}
+              senderName={senderName}
+              senderPhone={senderPhone}
+              recipientName={recipientName}
+              recipientPhone={recipientPhone}
               t={t}
             />
           )}
@@ -632,7 +750,6 @@ export default function CustomerHomeScreen() {
               onPreviewDriver={handlePreviewDriver}
               onSelectDriver={handleSelectDriver}
               onCancel={handleCancelSearch}
-              insetBottom={insets.bottom}
               t={t}
             />
           )}
@@ -691,11 +808,11 @@ export default function CustomerHomeScreen() {
 // ─────────────────────────────────────────────
 
 function AddressInput({
-  value, onChangeText, placeholder, autoFocus, onBookmark,
-}: { value: string; onChangeText: (t: string) => void; placeholder: string; autoFocus?: boolean; onBookmark?: () => void }) {
+  value, onChangeText, placeholder, autoFocus, onBookmark, onClear,
+}: { value: string; onChangeText: (t: string) => void; placeholder: string; autoFocus?: boolean; onBookmark?: () => void; onClear?: () => void }) {
   return (
     <View style={sub.inputWrap}>
-      <Ionicons name="location-outline" size={18} color={BRAND} style={{ marginRight: 8 }} />
+      <Ionicons name="location-outline" size={14} color={BRAND} style={{ marginRight: 6 }} />
       <TextInput
         style={sub.input}
         value={value}
@@ -705,6 +822,15 @@ function AddressInput({
         autoFocus={autoFocus}
         returnKeyType="search"
       />
+      {onClear && value.length > 0 && (
+        <TouchableOpacity
+          onPress={onClear}
+          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+          style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center', marginRight: 4 }}
+        >
+          <Ionicons name="close" size={14} color="#64748B" />
+        </TouchableOpacity>
+      )}
       {onBookmark && (
         <TouchableOpacity
           onPress={onBookmark}
@@ -728,25 +854,40 @@ function SuggRow({ item, onPress }: { item: SuggItem; onPress: () => void }) {
 }
 
 function SavedChips({
-  savedLocs, onSelect, onRemove, t,
-}: { savedLocs: SavedLoc[]; onSelect: (l: SavedLoc) => void; onRemove: (name: string) => void; t: any }) {
+  savedLocs, onSelect, onRemove, onLocate, selectedChip, t,
+}: { savedLocs: SavedLoc[]; onSelect: (l: SavedLoc) => void; onRemove: (name: string) => void; onLocate: () => void; selectedChip: string | null; t: any }) {
   return (
     <View style={sub.chipsWrap}>
-      {savedLocs.map((loc, i) => (
-        <View key={i} style={sub.chipContainer}>
-          <TouchableOpacity style={sub.chipContent} onPress={() => onSelect(loc)}>
-            <Ionicons name="bookmark-outline" size={13} color={BRAND} />
-            <Text style={sub.chipText}>{loc.name}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={sub.chipRemoveBtn}
-            onPress={() => onRemove(loc.name)}
-            hitSlop={{ top: 6, bottom: 6, left: 4, right: 6 }}
-          >
-            <Ionicons name="close-outline" size={14} color="#94A3B8" />
-          </TouchableOpacity>
-        </View>
-      ))}
+      {/* Chip vị trí hiện tại – cố định đầu, không có X */}
+      {(() => {
+        const sel = selectedChip === 'locate'
+        return (
+          <View style={[sub.chipContainer, sel && sub.chipContainerSel]}>
+            <TouchableOpacity style={[sub.chipContent, { paddingRight: 10 }]} onPress={onLocate}>
+              <Ionicons name="locate" size={13} color={sel ? '#fff' : BRAND} />
+              <Text style={[sub.chipText, sel && sub.chipTextSel]}>{t('trip.currentLocation')}</Text>
+            </TouchableOpacity>
+          </View>
+        )
+      })()}
+      {savedLocs.map((loc, i) => {
+        const sel = selectedChip === loc.name
+        return (
+          <View key={i} style={[sub.chipContainer, sel && sub.chipContainerSel]}>
+            <TouchableOpacity style={sub.chipContent} onPress={() => onSelect(loc)}>
+              <Ionicons name="bookmark-outline" size={13} color={sel ? '#fff' : BRAND} />
+              <Text style={[sub.chipText, sel && sub.chipTextSel]}>{loc.name}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={sub.chipRemoveBtn}
+              onPress={() => onRemove(loc.name)}
+              hitSlop={{ top: 6, bottom: 6, left: 4, right: 6 }}
+            >
+              <Ionicons name="close-outline" size={14} color={sel ? '#fff' : '#94A3B8'} />
+            </TouchableOpacity>
+          </View>
+        )
+      })}
     </View>
   )
 }
@@ -833,31 +974,83 @@ function VehiclePanel({ vehicle, transportModel, onVehicleChange, onTransportMod
 }
 
 // Panel 1 – Pickup location
-function PickupPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSaved, suggestions, onSelectSugg, onConfirm, onBack, onSave, insetBottom, t }: any) {
-  const showSugg = suggestions.length > 0
+function PickupPanel({ text, onChangeText, onClear, savedLocs, onSelectSaved, onRemoveSaved, suggestions, onSelectSugg, onConfirm, onBack, onSave, onLocate, insetBottom, transportModel, senderName, senderPhone, onSenderNameChange, onSenderPhoneChange, t }: any) {
+  const [activeChip, setActiveChip] = useState<string | null>('locate')
+  const showSugg  = suggestions.length > 0
+  const isFreight = transportModel === 'freight'
   return (
     <View style={sub.panelFlex}>
       <View style={sub.panelHeaderRow}>
         <TouchableOpacity style={sub.panelBackBtn} onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Ionicons name="chevron-back" size={22} color={BRAND} />
         </TouchableOpacity>
-        <Text style={sub.panelTitleCenter}>{t('trip.stepPickup')}</Text>
+        <Text style={sub.panelTitleCenter}>
+          {isFreight ? t('trip.stepPickupFreight') : t('trip.stepPickup')}
+        </Text>
         <View style={{ width: 36 }} />
       </View>
-      <AddressInput value={text} onChangeText={onChangeText} placeholder={t('trip.pickupPlaceholder')} onBookmark={onSave} />
-      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      {isFreight && (
+        <View style={[sub.freightContactRow, { marginBottom: 8 }]}>
+          <View style={[sub.freightInputWrap, { flex: 6 }]}>
+            <Ionicons name="person-outline" size={14} color={BRAND} style={{ marginRight: 6 }} />
+            <TextInput
+              style={sub.freightInput}
+              value={senderName}
+              onChangeText={onSenderNameChange}
+              placeholder={t('trip.senderNamePlaceholder')}
+              placeholderTextColor="#94A3B8"
+              autoCapitalize="words"
+              returnKeyType="next"
+            />
+          </View>
+          <View style={[sub.freightInputWrap, { flex: 4, marginLeft: 8 }]}>
+            <Ionicons name="call-outline" size={14} color={BRAND} style={{ marginRight: 6 }} />
+            <TextInput
+              style={sub.freightInput}
+              value={senderPhone}
+              onChangeText={onSenderPhoneChange}
+              placeholder={t('trip.senderPhonePlaceholder')}
+              placeholderTextColor="#94A3B8"
+              keyboardType="phone-pad"
+              returnKeyType="done"
+            />
+          </View>
+        </View>
+      )}
+      <AddressInput
+        value={text}
+        onChangeText={(v: string) => { setActiveChip(null); onChangeText(v) }}
+        onClear={() => { setActiveChip(null); onClear() }}
+        placeholder={isFreight ? t('trip.pickupFreightPlaceholder') : t('trip.pickupPlaceholder')}
+        onBookmark={onSave}
+      />
+      <ScrollView
+        style={{ flex: 1 }}
+        scrollEnabled
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {showSugg ? (
           <View style={sub.suggList}>
             {suggestions.map((s: SuggItem, i: number) => (
-              <SuggRow key={i} item={s} onPress={() => onSelectSugg(s)} />
+              <SuggRow key={i} item={s} onPress={() => { setActiveChip(null); onSelectSugg(s) }} />
             ))}
           </View>
         ) : (
-          <SavedChips savedLocs={savedLocs} onSelect={onSelectSaved} onRemove={onRemoveSaved} t={t} />
+          <SavedChips
+            savedLocs={savedLocs}
+            onSelect={(loc: SavedLoc) => { setActiveChip(loc.name); onSelectSaved(loc) }}
+            onRemove={onRemoveSaved}
+            onLocate={() => { setActiveChip('locate'); onLocate() }}
+            selectedChip={activeChip}
+            t={t}
+          />
         )}
       </ScrollView>
       <TouchableOpacity style={[sub.confirmBtn, { marginBottom: (insetBottom || 0) + 16 }]} onPress={onConfirm} activeOpacity={0.85}>
-        <Text style={sub.confirmBtnText}>{t('trip.confirmPickup')}</Text>
+        <Text style={sub.confirmBtnText}>
+          {isFreight ? t('trip.confirmPickupFreight') : t('trip.confirmPickup')}
+        </Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
       </TouchableOpacity>
     </View>
@@ -865,88 +1058,185 @@ function PickupPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSav
 }
 
 // Panel 2 – Destination
-function DestPanel({ text, onChangeText, savedLocs, onSelectSaved, onRemoveSaved, suggestions, onSelectSugg, onConfirm, onBack, onSave, insetBottom, t }: any) {
-  const showSugg = suggestions.length > 0
+function DestPanel({ text, onChangeText, onClear, savedLocs, onSelectSaved, onRemoveSaved, suggestions, onSelectSugg, onConfirm, onBack, onSave, onLocate, insetBottom, transportModel, recipientName, recipientPhone, onRecipientNameChange, onRecipientPhoneChange, t }: any) {
+  const [activeChip, setActiveChip] = useState<string | null>(null)
+  const showSugg  = suggestions.length > 0
+  const isFreight = transportModel === 'freight'
   return (
     <View style={sub.panelFlex}>
       <View style={sub.panelHeaderRow}>
         <TouchableOpacity style={sub.panelBackBtn} onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Ionicons name="chevron-back" size={22} color={BRAND} />
         </TouchableOpacity>
-        <Text style={sub.panelTitleCenter}>{t('trip.stepDest')}</Text>
+        <Text style={sub.panelTitleCenter}>
+          {isFreight ? t('trip.stepDestFreight') : t('trip.stepDest')}
+        </Text>
         <View style={{ width: 36 }} />
       </View>
-      <AddressInput value={text} onChangeText={onChangeText} placeholder={t('trip.destPlaceholder')} autoFocus onBookmark={onSave} />
-      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      {isFreight && (
+        <View style={[sub.freightContactRow, { marginBottom: 8 }]}>
+          <View style={[sub.freightInputWrap, { flex: 6 }]}>
+            <Ionicons name="person-outline" size={14} color={BRAND} style={{ marginRight: 6 }} />
+            <TextInput
+              style={sub.freightInput}
+              value={recipientName}
+              onChangeText={onRecipientNameChange}
+              placeholder={t('trip.recipientNamePlaceholder')}
+              placeholderTextColor="#94A3B8"
+              autoCapitalize="words"
+              returnKeyType="next"
+            />
+          </View>
+          <View style={[sub.freightInputWrap, { flex: 4, marginLeft: 8 }]}>
+            <Ionicons name="call-outline" size={14} color={BRAND} style={{ marginRight: 6 }} />
+            <TextInput
+              style={sub.freightInput}
+              value={recipientPhone}
+              onChangeText={onRecipientPhoneChange}
+              placeholder={t('trip.recipientPhonePlaceholder')}
+              placeholderTextColor="#94A3B8"
+              keyboardType="phone-pad"
+              returnKeyType="done"
+            />
+          </View>
+        </View>
+      )}
+      <AddressInput
+        value={text}
+        onChangeText={(v: string) => { setActiveChip(null); onChangeText(v) }}
+        onClear={() => { setActiveChip(null); onClear() }}
+        placeholder={isFreight ? t('trip.destFreightPlaceholder') : t('trip.destPlaceholder')}
+        onBookmark={onSave}
+      />
+      <ScrollView
+        style={{ flex: 1 }}
+        scrollEnabled
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {showSugg ? (
           <View style={sub.suggList}>
             {suggestions.map((s: SuggItem, i: number) => (
-              <SuggRow key={i} item={s} onPress={() => onSelectSugg(s)} />
+              <SuggRow key={i} item={s} onPress={() => { setActiveChip(null); onSelectSugg(s) }} />
             ))}
           </View>
         ) : (
-          <SavedChips savedLocs={savedLocs} onSelect={onSelectSaved} onRemove={onRemoveSaved} t={t} />
+          <SavedChips
+            savedLocs={savedLocs}
+            onSelect={(loc: SavedLoc) => { setActiveChip(loc.name); onSelectSaved(loc) }}
+            onRemove={onRemoveSaved}
+            onLocate={() => { setActiveChip('locate'); onLocate() }}
+            selectedChip={activeChip}
+            t={t}
+          />
         )}
       </ScrollView>
       <TouchableOpacity style={[sub.confirmBtn, { marginBottom: (insetBottom || 0) + 16 }]} onPress={onConfirm} activeOpacity={0.85}>
-        <Text style={sub.confirmBtnText}>{t('trip.confirmDest')}</Text>
+        <Text style={sub.confirmBtnText}>
+          {isFreight ? t('trip.confirmDestFreight') : t('trip.confirmDest')}
+        </Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
       </TouchableOpacity>
     </View>
   )
 }
 
-// Panel 3 – Summary + Note + Book
-function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, onBack, insetBottom, t }: any) {
+// Panel 3 – Summary + Note + Book  (horizontal 2-page swipe)
+const BOOK_PAGE_W = SCREEN_W - 40   // panelContent has paddingHorizontal 20 each side
+
+function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, onBack, insetBottom, transportModel, senderName, senderPhone, recipientName, recipientPhone, t }: any) {
+  const isFreight = transportModel === 'freight'
   return (
     <View style={sub.panelFlex}>
       <View style={sub.panelHeaderRow}>
         <TouchableOpacity style={sub.panelBackBtn} onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Ionicons name="chevron-back" size={22} color={BRAND} />
         </TouchableOpacity>
-        <Text style={sub.panelTitleCenter}>{t('trip.bookTitle')}</Text>
+        <Text style={sub.panelTitleCenter}>
+          {isFreight ? t('trip.bookTitleFreight') : t('trip.bookTitle')}
+        </Text>
         <View style={{ width: 36 }} />
       </View>
-      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        <View style={sub.routeSummary}>
-          <View style={sub.routeRow}>
-            <Ionicons name="location-sharp" size={16} color={BRAND} style={sub.routeIcon} />
-            <View style={{ flex: 1 }}>
-              <Text style={sub.routePointLabel}>{t('trip.pickupLabel')}</Text>
-              <Text style={sub.routeText} numberOfLines={2}>{pickup?.address}</Text>
-            </View>
-          </View>
-          <View style={sub.routeLine} />
-          <View style={sub.routeRow}>
-            <Ionicons name="location-sharp" size={16} color="#EA580C" style={sub.routeIcon} />
-            <View style={{ flex: 1 }}>
-              <Text style={sub.routePointLabel}>{t('trip.destLabel')}</Text>
-              <Text style={sub.routeText} numberOfLines={2}>{dest?.address}</Text>
-            </View>
-          </View>
-          {distKm != null && (
-            <>
-              <View style={sub.routeLine} />
-              <View style={[sub.routeRow, { alignItems: 'center' }]}>
-                <Ionicons name="navigate-outline" size={16} color={BRAND} style={{ flexShrink: 0 }} />
-                <Text style={[sub.routeText, { marginLeft: 8 }]}>{t('trip.estDistance', { km: distKm })}</Text>
+
+      {/* Horizontally paginated: Page 1 = route info, Page 2 = freight contacts + note */}
+      <ScrollView
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Page 1 – Route summary + swipe hint */}
+        <View style={{ width: BOOK_PAGE_W }}>
+          <View style={sub.routeSummary}>
+            <View style={sub.routeRow}>
+              <Ionicons name="location-sharp" size={16} color={BRAND} style={sub.routeIcon} />
+              <View style={{ flex: 1 }}>
+                <Text style={sub.routePointLabel}>
+                  {isFreight ? t('trip.pickupLabelFreight') : t('trip.pickupLabel')}
+                </Text>
+                <Text style={sub.routeText} numberOfLines={2}>{pickup?.address}</Text>
               </View>
-            </>
-          )}
+            </View>
+            <View style={sub.routeLine} />
+            <View style={sub.routeRow}>
+              <Ionicons name="location-sharp" size={16} color="#EA580C" style={sub.routeIcon} />
+              <View style={{ flex: 1 }}>
+                <Text style={sub.routePointLabel}>
+                  {isFreight ? t('trip.destLabelFreight') : t('trip.destLabel')}
+                </Text>
+                <Text style={sub.routeText} numberOfLines={2}>{dest?.address}</Text>
+              </View>
+            </View>
+            {distKm != null && (
+              <>
+                <View style={sub.routeLine} />
+                <View style={[sub.routeRow, { alignItems: 'center' }]}>
+                  <Ionicons name="navigate-outline" size={16} color={BRAND} style={{ flexShrink: 0 }} />
+                  <Text style={[sub.routeText, { marginLeft: 8 }]}>{t('trip.estDistance', { km: distKm })}</Text>
+                </View>
+              </>
+            )}
+          </View>
+          <Text style={sub.swipeHint} numberOfLines={1} adjustsFontSizeToFit>
+            {isFreight ? t('trip.swipeForInfoAndNote') : t('trip.swipeForNote')}
+          </Text>
         </View>
 
-        <Text style={sub.sectionLabel}>{t('trip.note')}</Text>
-        <View style={sub.noteWrap}>
-          <TextInput
-            style={sub.noteInput}
-            value={note}
-            onChangeText={onNoteChange}
-            placeholder={t('trip.notePlaceholder')}
-            placeholderTextColor="#94A3B8"
-            multiline
-            numberOfLines={2}
-            maxLength={100}
-          />
+        {/* Page 2 – Freight contacts (if freight) + Note input */}
+        <View style={{ width: BOOK_PAGE_W }}>
+          {isFreight && (
+            <>
+              <View style={sub.freightSummaryRow}>
+                <Ionicons name="person-outline" size={14} color={BRAND} style={{ marginTop: 2 }} />
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  <Text style={sub.freightSummaryLabel}>{t('trip.senderLabel')}</Text>
+                  <Text style={sub.freightSummaryValue}>{senderName} – {senderPhone}</Text>
+                </View>
+              </View>
+              <View style={sub.freightSummaryRow}>
+                <Ionicons name="person-outline" size={14} color="#EA580C" style={{ marginTop: 2 }} />
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  <Text style={sub.freightSummaryLabel}>{t('trip.recipientLabel')}</Text>
+                  <Text style={sub.freightSummaryValue}>{recipientName} – {recipientPhone}</Text>
+                </View>
+              </View>
+              <View style={[sub.routeLine, { marginVertical: 8 }]} />
+            </>
+          )}
+          <Text style={sub.sectionLabel}>{t('trip.note')}</Text>
+          <View style={sub.noteWrap}>
+            <TextInput
+              style={sub.noteInput}
+              value={note}
+              onChangeText={onNoteChange}
+              placeholder={t('trip.notePlaceholder')}
+              placeholderTextColor="#94A3B8"
+              multiline
+              numberOfLines={3}
+              maxLength={100}
+            />
+          </View>
         </View>
       </ScrollView>
 
@@ -967,24 +1257,26 @@ function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, 
 }
 
 // Panel 4 – Quotes from drivers
-function QuotesPanel({ searching, searchFailed, countdown, quotes, onPreviewDriver, onSelectDriver, onCancel, insetBottom, t }: any) {
+function QuotesPanel({ searching, searchFailed, countdown, quotes, onPreviewDriver, onSelectDriver, onCancel, t }: any) {
   return (
     <View style={sub.panelFlex}>
-      {/* Header */}
-      <View style={sub.quotesHeader}>
-        <Text style={sub.quotesTitle}>
+      <View style={sub.panelHeaderRow}>
+        <TouchableOpacity style={sub.panelBackBtn} onPress={onCancel} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="chevron-back" size={22} color={BRAND} />
+        </TouchableOpacity>
+        <Text style={sub.panelTitleCenter}>
           {searchFailed
             ? t('trip.noDriver')
             : quotes.length > 0
               ? t('trip.quotes')
               : t('trip.searching')}
         </Text>
-        {searching && !searchFailed && (
-          <Text style={sub.quotesCountdown}>{countdown}s</Text>
-        )}
+        {searching && !searchFailed
+          ? <Text style={[sub.quotesCountdown, { minWidth: 36, textAlign: 'right' }]}>{countdown}s</Text>
+          : <View style={{ width: 36 }} />
+        }
       </View>
 
-      {/* Content */}
       <View style={{ flex: 1 }}>
         {quotes.length > 0 ? (
           <QuoteList quotes={quotes} onSelect={onSelectDriver} onPreview={onPreviewDriver} />
@@ -1000,17 +1292,6 @@ function QuotesPanel({ searching, searchFailed, countdown, quotes, onPreviewDriv
           </View>
         )}
       </View>
-
-      {/* Cancel */}
-      <TouchableOpacity
-        style={[sub.cancelBtn, { marginBottom: insetBottom || 4 }]}
-        onPress={onCancel}
-        activeOpacity={0.85}
-      >
-        <Text style={sub.cancelBtnText}>
-          {searchFailed ? t('common.retry') : t('cancel.yes')}
-        </Text>
-      </TouchableOpacity>
     </View>
   )
 }
@@ -1075,7 +1356,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#CBD5E1',
   },
   panelContent: {
-    height: PARTIAL_H - HANDLE_H,
     overflow: 'hidden',
     paddingHorizontal: 20,
   },
@@ -1127,9 +1407,11 @@ const sub = StyleSheet.create({
     borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 20,
     backgroundColor: '#F8FAFC', overflow: 'hidden',
   },
-  chipContent:   { flexDirection: 'row', alignItems: 'center', gap: 5, paddingLeft: 10, paddingVertical: 7, paddingRight: 4 },
-  chipText:      { fontSize: 12, color: BRAND, fontWeight: '500' },
-  chipRemoveBtn: { paddingVertical: 7, paddingLeft: 2, paddingRight: 8 },
+  chipContent:        { flexDirection: 'row', alignItems: 'center', gap: 5, paddingLeft: 10, paddingVertical: 7, paddingRight: 4 },
+  chipText:           { fontSize: 12, color: BRAND, fontWeight: '500' },
+  chipTextSel:        { color: '#fff', fontWeight: '700' },
+  chipRemoveBtn:      { paddingVertical: 7, paddingLeft: 2, paddingRight: 8 },
+  chipContainerSel:   { backgroundColor: BRAND, borderColor: BRAND },
 
   // Autocomplete
   suggList: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, overflow: 'hidden', marginTop: 4 },
@@ -1177,6 +1459,25 @@ const sub = StyleSheet.create({
 
   noteWrap:  { borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 12, backgroundColor: '#F8FAFC', marginBottom: 4 },
   noteInput: { fontSize: 14, color: '#0F172A', paddingVertical: 10, textAlignVertical: 'top' },
+
+  swipeHint: { fontSize: 14, color: '#94A3B8', textAlign: 'center', marginBottom: 8, fontStyle: 'italic' },
+
+  // Freight contact fields (steps 1-2)
+  freightContactBlock: { marginBottom: 8, marginTop: 4 },
+  freightContactTitle: { fontSize: 12, fontWeight: '600', color: BRAND, marginBottom: 5, letterSpacing: 0.3 },
+  freightContactRow:  { flexDirection: 'row' },
+  freightInputWrap:   {
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 10,
+    paddingHorizontal: 8, paddingVertical: 8, backgroundColor: '#F8FAFC',
+  },
+  freightInput:       { flex: 1, fontSize: 13, color: '#0F172A', paddingVertical: 0 },
+
+  // Freight summary (step 3, page 2)
+  freightSummaryRow:   { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
+  freightSummaryLabel: { fontSize: 10, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 1 },
+  freightSummaryValue: { fontSize: 13, color: '#0F172A', fontWeight: '600' },
+  freightSummaryPhone: { fontSize: 12, color: '#64748B', marginTop: 1 },
 
   // Quotes panel
   quotesHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, marginTop: 4 },

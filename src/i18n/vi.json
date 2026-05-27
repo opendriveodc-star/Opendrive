@@ -51,7 +51,9 @@
     "otpPlaceholder":   "Nhập mã 6 số",
     "verifying":        "Đang xác thực...",
     "resendOTP":        "Gửi lại mã",
-    "resendIn":         "Gửi lại sau {{seconds}}s"
+    "resendIn":         "Gửi lại sau {{seconds}}s",
+    "rateLimitTitle":   "Xác thực quá thường xuyên",
+    "rateLimitBody":    "Số điện thoại này đã xác thực gần đây. Vui lòng thử lại sau {{hours}} giờ."
   },
   "terms": {
     "title":       "Điều khoản sử dụng",
@@ -210,6 +212,7 @@
     "bookRide":         "ĐĂNG TIN TÌM XE",
     "selectVehicleTitle": "Chọn loại hình vận chuyển và loại xe",
     "bookTitle":          "Xác nhận điểm đón và đến",
+    "bookTitleFreight":   "Xác nhận thông tin giao nhận hàng",
     "vehicleScrollHint":  "Trượt qua lại để xem tiếp",
     "note":             "Ghi chú cho tài xế",
     "notePlaceholder":  "VD: Đứng trước cổng màu xanh... (tuỳ chọn)",
@@ -234,7 +237,27 @@
     "waitForRating":         "Đang chờ khách đánh giá...",
     "firstTripTitle":        "Chúc mừng chuyến đầu tiên!",
     "firstTripBonus":        "Bạn vừa hoàn thành chuyến xe đầu tiên trên OpenDrive.\n\nHệ thống đã tặng bạn 10 ODC như một lời chào mừng.\nHãy tiếp tục cống hiến — cộng đồng cần bạn!",
-    "trips":                 "chuyến"
+    "trips":                 "chuyến",
+    "swipeForNote":               "Vuốt qua phải để thêm ghi chú cho tài xế →",
+    "swipeForInfoAndNote":        "Vuốt qua phải để xem thông tin & ghi chú →",
+    "currentLocation":            "Vị trí hiện tại",
+    "stepPickupFreight":          "Thông tin người giao hàng",
+    "stepDestFreight":            "Thông tin người nhận hàng",
+    "pickupFreightPlaceholder":   "Nhập điểm nhận hàng",
+    "destFreightPlaceholder":     "Nhập điểm giao hàng",
+    "confirmPickupFreight":       "Xác nhận điểm nhận hàng",
+    "confirmDestFreight":         "Xác nhận điểm giao hàng",
+    "pickupLabelFreight":         "Điểm lấy hàng",
+    "destLabelFreight":           "Điểm giao hàng",
+    "senderInfo":                 "Tên và SĐT người giao hàng",
+    "senderNamePlaceholder":      "Họ và tên người giao",
+    "senderPhonePlaceholder":     "Số điện thoại",
+    "recipientInfo":              "Tên và SĐT người nhận hàng",
+    "recipientNamePlaceholder":   "Họ và tên người nhận",
+    "recipientPhonePlaceholder":  "Số điện thoại",
+    "senderLabel":                "Người giao",
+    "recipientLabel":             "Người nhận",
+    "freightContactsPage":        "Thông tin giao nhận"
   },
   "cancel": {
     "title":             "Hủy chuyến",
@@ -245,18 +268,26 @@
     "no":                "Không hủy",
     "driverCancelled":   "Tài xế đã hủy chuyến",
     "driverCancelledBy": "{{name}} đã hủy chuyến",
-    "customerCancelled": "Khách đã hủy chuyến"
+    "customerCancelled": "Khách đã hủy chuyến",
+    "abandonHasQuotes":  "Đã có tài xế báo giá. Bạn có chắc muốn hủy chuyến này không?"
   },
   "lock": {
     "title":   "Tài khoản bị tạm khóa",
     "reason": {
       "cancelTrip":       "Bạn đã hủy chuyến khi đang thực hiện",
-      "fraudDetected":    "Phát hiện dấu hiệu gian lận",
+      "fraud":            "Phát hiện dấu hiệu gian lận",
       "lowRating":        "Đánh giá quá thấp",
-      "frequentCancel":   "Hủy chuyến nhiều lần gây ảnh hưởng đến tài xế"
+      "frequentCancel":   "Bạn đã hủy chuyến nhiều lần trong khoảng thời gian ngắn gây ảnh hưởng đến tài xế"
     },
-    "unlockIn": "Mở khóa sau: {{time}}",
-    "unlocked": "Tài khoản đã được mở khóa"
+    "subtitle":    "Tài khoản của bạn đang tạm thời bị hạn chế",
+    "unlockAfter": "MỞ KHÓA SAU",
+    "hours":       "Giờ",
+    "minutes":     "Phút",
+    "seconds":     "Giây",
+    "note":        "Tài khoản tự động mở khi hết thời gian.\nTránh hủy chuyến nhiều lần để không bị khóa tiếp.",
+    "logout":      "Đăng xuất / Chọn vai trò khác",
+    "unlockIn":    "Mở khóa sau: {{time}}",
+    "unlocked":    "Tài khoản đã được mở khóa"
   },
   "pending": {
     "title":      "Bạn có chuyến chưa hoàn thành",

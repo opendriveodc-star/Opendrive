@@ -16,7 +16,8 @@ import * as SecureStore from 'expo-secure-store'
 import type { UserRole, DriverInfo, CustomerInfo } from '../../src/types'
 import { SecureStoreKey } from '../../src/types'
 import { auth } from '../../src/services/firebase'
-import { getDriver, getMiner, getCustomerPenalty, setCustomerLockedUntil } from '../../src/services/firestore'
+import { getDriver, getMiner, getCustomerPenalty, setCustomerLockedUntil, checkAndRecordAuthLog } from '../../src/services/firestore'
+import { signOut } from 'firebase/auth'
 
 const BRAND       = '#1A2E5E'
 const BRAND_LIGHT = '#E8EDF6'
@@ -106,6 +107,22 @@ export default function PhoneAuthScreen() {
   }
 
   async function handleAuthResult(uid: string) {
+    const normalizedPhone = normalizePhone(phone)
+
+    // Rate limit: chặn xóa data + xác thực lại trong vòng 24h
+    const authCheck = await checkAndRecordAuthLog(normalizedPhone, role as 'customer' | 'driver' | 'miner')
+      .catch(() => ({ blocked: false } as { blocked: boolean; lockedUntil?: number }))
+    if (authCheck.blocked) {
+      signOut(auth).catch(() => {})
+      const hours = Math.ceil((authCheck.lockedUntil! - Date.now()) / (1000 * 60 * 60))
+      showAlert(
+        t('auth.rateLimitTitle'),
+        t('auth.rateLimitBody', { hours }),
+        [{ text: 'OK', onPress: () => router.replace('/role-select') }],
+      )
+      return
+    }
+
     if (role === 'driver') {
       const doc = await getDriver(uid)
       if (doc) {

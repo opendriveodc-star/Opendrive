@@ -79,7 +79,7 @@ export default function QuoteList({ quotes, onSelect, onPreview }: QuoteListProp
 }
 
 const styles = StyleSheet.create({
-  list: { paddingVertical: 6 },
+  list: { paddingVertical: 6, paddingHorizontal: 12 },
 
   card: {
     backgroundColor: '#fff',

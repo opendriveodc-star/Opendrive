@@ -101,3 +101,26 @@ export async function incrementCustomerPenalty(phone: string, amount: number): P
 export async function setCustomerLockedUntil(phone: string, lockedUntil: number): Promise<void> {
   await withTimeout(firestoreRest.patch('blacklist_customers', phone, { lockedUntil, updatedAt: now() }))
 }
+
+// ─── Auth Log (rate limit xác thực OTP) ──────────────────────────────────────
+
+const AUTH_LOG_24H = 24 * 60 * 60 * 1000
+
+export async function checkAndRecordAuthLog(
+  phone: string,
+  role: 'customer' | 'driver' | 'miner',
+): Promise<{ blocked: boolean; lockedUntil?: number }> {
+  const docId = `${role}_${phone}`
+  try {
+    const snap = await withTimeout(getDoc(doc(db, 'auth_log', docId)))
+    if (snap.exists()) {
+      const verifiedAt = snap.data().verifiedAt as number
+      if (Date.now() - verifiedAt < AUTH_LOG_24H) {
+        return { blocked: true, lockedUntil: verifiedAt + AUTH_LOG_24H }
+      }
+    }
+  } catch {}
+  // Ghi/cập nhật record — best-effort, không block flow nếu fail
+  firestoreRest.patch('auth_log', docId, { verifiedAt: Date.now(), phone, role }).catch(() => {})
+  return { blocked: false }
+}
