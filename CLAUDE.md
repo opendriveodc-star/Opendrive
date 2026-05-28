@@ -285,7 +285,6 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **Root cause FCM:** `phone.tsx` load Firestore nhưng **không copy `fcmToken`** vào `DriverInfo` khi lưu SecureStore → mỗi lần đăng nhập lại `driverInfo.fcmToken = undefined` → `trip_info.driverFcmToken = ''` → khách hủy chuyến tài xế không nhận được FCM
   - **Fix `phone.tsx`:** thêm `fcmToken: doc.fcmToken` vào object `DriverInfo` khi lưu SecureStore lúc đăng nhập
   - **Fix `trip.tsx`:** đảo thứ tự lấy token — `getDevicePushTokenAsync()` trước (luôn tươi từ OS), fallback SecureStore
-  - **Worker notify-cancel:** xóa `channel_id: 'trip_alerts'` (channel không tồn tại, Android drop notification im lặng)
   - **BookPanel UI** (`home.tsx`): xóa `borderWidth`/`borderColor` khỏi `freightInfoCard`, `freightDistCard`, `freightNoteCard` — cả passenger lẫn freight
 
 ### Bàn giao Session 42 – Bắt đầu từ đây
