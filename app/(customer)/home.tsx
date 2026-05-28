@@ -35,15 +35,16 @@ const BRAND = '#1A2E5E'
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window')
 
 // Sheet snap levels
-const HANDLE_H  = 52
-const PARTIAL_H = 380
-const FULL_H    = Math.round(SCREEN_H * 0.72)
+const HANDLE_H            = 52
+const FULL_H              = Math.round(SCREEN_H * 0.85)
+const PARTIAL_H_PASSENGER = 490
+// freight step 3: header(52) + 2 info card(~96×2) + dist(~38) + note(~72) + button(~74) ≈ 470
+const PARTIAL_H_FREIGHT   = Math.min(490, FULL_H - 4)
 
-// translateY values for each snap level (sheet container is FULL_H tall, bottom-anchored)
-const SNAP_Y: Record<0|1|2, number> = {
-  2: 0,
-  1: FULL_H - PARTIAL_H,
-  0: FULL_H - HANDLE_H,
+function getSnapY(level: 0|1|2, pH: number): number {
+  if (level === 2) return 0
+  if (level === 1) return FULL_H - pH
+  return FULL_H - HANDLE_H
 }
 
 // Vehicle carousel card width – 3 cards vừa khít, vẫn scroll nếu thêm xe
@@ -67,12 +68,6 @@ export default function CustomerHomeScreen() {
   const insets   = useSafeAreaInsets()
   const topBarH  = insets.top + 50   // safe area + buttons row
 
-  // Crosshair % for level 1 (default) – used as initial MapView prop
-  const pinTopPct = useMemo(() => {
-    const frac = (topBarH + (SCREEN_H - topBarH - PARTIAL_H) / 2) / SCREEN_H
-    return Math.round(frac * 100)
-  }, [topBarH])
-
   const [step,             setStep]             = useState<Step>(0)
   const [pickup,           setPickup]           = useState<LocPoint | null>(null)
   const [dest,             setDest]             = useState<LocPoint | null>(null)
@@ -81,6 +76,15 @@ export default function CustomerHomeScreen() {
   const [note,             setNote]             = useState('')
   const [vehicle,          setVehicle]          = useState<VehicleType>('motorbike')
   const [transportModel,   setTransportModel]   = useState<TransportModel>('passenger')
+
+  // partialH tính thẳng từ transportModel – không bao giờ stale
+  const partialH = transportModel === 'freight' ? PARTIAL_H_FREIGHT : PARTIAL_H_PASSENGER
+
+  // Crosshair % for level 1 (default) – used as initial MapView prop
+  const pinTopPct = useMemo(() => {
+    const frac = (topBarH + (SCREEN_H - topBarH - partialH) / 2) / SCREEN_H
+    return Math.round(frac * 100)
+  }, [topBarH, partialH])
   const [senderName,       setSenderName]       = useState('')
   const [senderPhone,      setSenderPhone]      = useState('')
   const [recipientName,    setRecipientName]    = useState('')
@@ -103,8 +107,10 @@ export default function CustomerHomeScreen() {
   const [contentLevel,     setContentLevel]     = useState<0|1|2>(1)
 
   const mapRef          = useRef<MapViewHandle>(null)
+  const partialHRef     = useRef(PARTIAL_H_PASSENGER)
+  partialHRef.current   = partialH   // luôn đồng bộ với transportModel
   const panelX          = useRef(new Animated.Value(0)).current
-  const sheetY          = useRef(new Animated.Value(SNAP_Y[1])).current
+  const sheetY          = useRef(new Animated.Value(getSnapY(1, PARTIAL_H_PASSENGER))).current
   const isAnimating     = useRef(false)
   const stepRef         = useRef<Step>(0)
   const retryPickupRef  = useRef<{ lat: number; lng: number } | null>(null)
@@ -160,11 +166,11 @@ export default function CustomerHomeScreen() {
   // panelContent height: step 4 level 2 expands to fill full sheet, others fixed
   const panelContentH = step === 4 && contentLevel === 2
     ? FULL_H - HANDLE_H
-    : PARTIAL_H - HANDLE_H
+    : partialH - HANDLE_H
 
   // ── Sheet padding helpers ──────────────────────────────────────────────────
   function visiblePad(level: 0|1|2) {
-    const panelH = level === 0 ? HANDLE_H : level === 1 ? PARTIAL_H : FULL_H
+    const panelH = level === 0 ? HANDLE_H : level === 1 ? partialHRef.current : FULL_H
     return { top: topBarHRef.current, bottom: panelH + (insets.bottom ?? 0) }
   }
 
@@ -183,7 +189,7 @@ export default function CustomerHomeScreen() {
       setContentLevel(level)
     }
     Animated.spring(sheetY, {
-      toValue: SNAP_Y[level],
+      toValue: getSnapY(level, partialHRef.current),
       useNativeDriver: true,
       tension: 68,
       friction: 12,
@@ -205,18 +211,20 @@ export default function CustomerHomeScreen() {
       Math.abs(g.dy) > 4 && Math.abs(g.dy) > Math.abs(g.dx),
     onPanResponderMove: (_, g) => {
       const isStep4 = stepRef.current === 4
+      const pH      = partialHRef.current
       const maxLvl  = isStep4 ? 2 : 1
       const minLvl  = isStep4 ? 1 : 0
-      const base    = SNAP_Y[sheetLvlRef.current]
-      const next    = Math.max(SNAP_Y[maxLvl], Math.min(SNAP_Y[minLvl], base + g.dy))
+      const base    = getSnapY(sheetLvlRef.current, pH)
+      const next    = Math.max(getSnapY(maxLvl, pH), Math.min(getSnapY(minLvl, pH), base + g.dy))
       sheetY.setValue(next)
     },
     onPanResponderRelease: (_, g) => {
       const isStep4 = stepRef.current === 4
-      const base    = SNAP_Y[sheetLvlRef.current]
+      const pH      = partialHRef.current
+      const base    = getSnapY(sheetLvlRef.current, pH)
       const projY   = base + g.dy + g.vy * 120
       const lvls    = isStep4 ? ([1, 2] as const) : ([0, 1] as const)
-      const dists   = lvls.map(l => ({ l, d: Math.abs(SNAP_Y[l] - projY) }))
+      const dists   = lvls.map(l => ({ l, d: Math.abs(getSnapY(l, pH) - projY) }))
       const target  = dists.reduce((a, b) => a.d < b.d ? a : b).l
       snapToLevel(target)
     },
@@ -313,7 +321,13 @@ export default function CustomerHomeScreen() {
       if (!raw) return
       await AsyncStorage.removeItem('retry_trip_data')
       const d = JSON.parse(raw)
-      if (d.vehicleType) setVehicle(d.vehicleType)
+      if (d.transportModel) {
+        setTransportModel(d.transportModel)
+        const model = TRANSPORT_MODELS.find((x: any) => x.key === d.transportModel) ?? TRANSPORT_MODELS[0]
+        setVehicle(d.vehicleType ?? model.vehicles[0].key)
+      } else if (d.vehicleType) {
+        setVehicle(d.vehicleType)
+      }
       if (d.pickupLat && d.pickupAddress) {
         setPickup({ lat: d.pickupLat, lng: d.pickupLng, address: d.pickupAddress })
         setPickupText(d.pickupAddress)
@@ -325,6 +339,10 @@ export default function CustomerHomeScreen() {
       }
       if (d.note) setNote(d.note)
       if (d.estimatedKm) setDistKm(d.estimatedKm)
+      if (d.senderName)     setSenderName(d.senderName)
+      if (d.senderPhone)    setSenderPhone(d.senderPhone)
+      if (d.recipientName)  setRecipientName(d.recipientName)
+      if (d.recipientPhone) setRecipientPhone(d.recipientPhone)
       setTimeout(() => goToStep(1), 300)
     } catch {}
   }
@@ -362,6 +380,22 @@ export default function CustomerHomeScreen() {
     const newList = savedLocs.filter(l => l.name !== name)
     setSavedLocs(newList)
     await AsyncStorage.setItem(SAVED_KEY, JSON.stringify(newList)).catch(() => {})
+  }
+
+  function handleTransportModelChange(m: TransportModel) {
+    setTransportModel(m)
+    const model = TRANSPORT_MODELS.find(x => x.key === m) ?? TRANSPORT_MODELS[0]
+    setVehicle(model.vehicles[0].key as VehicleType)
+    const newPH = m === 'freight' ? PARTIAL_H_FREIGHT : PARTIAL_H_PASSENGER
+    // Cập nhật ref ngay để animation dùng đúng giá trị (state update async)
+    partialHRef.current = newPH
+    Animated.spring(sheetY, {
+      toValue: getSnapY(sheetLvlRef.current, newPH),
+      useNativeDriver: true,
+      tension: 68,
+      friction: 12,
+    }).start()
+    mapRef.current?.setCrosshairPosition(crosshairFrac(sheetLvlRef.current))
   }
 
   // ── Navigation ────────────────────────────────────────────────────────────
@@ -535,7 +569,7 @@ export default function CustomerHomeScreen() {
     mapRef.current?.fitBoundsToMarkers(
       pickup.lat, pickup.lng,
       quote.driverLat, quote.driverLng,
-      PARTIAL_H,
+      partialHRef.current,
     )
   }
 
@@ -559,18 +593,27 @@ export default function CustomerHomeScreen() {
           recipientName: recipientName.trim(),
           recipientPhone: recipientPhone.trim(),
         }
-        await rtdb.set(`trips/${activeTripId}/freight_info`, fi).catch(() => {})
+        console.log('[home] writing freight_info:', JSON.stringify(fi), 'tripId:', activeTripId)
+        try {
+          await rtdb.set(`trips/${activeTripId}/freight_info`, fi)
+          console.log('[home] freight_info write OK')
+        } catch (e) { console.log('[home] freight_info write FAILED:', e) }
       }
       await notifySelectedDriver(activeTripId, quote.driverUid)
       router.push({
         pathname: '/(customer)/tracking',
         params: {
-          tripId:       activeTripId,
-          driverUid:    quote.driverUid,
-          driverName:   quote.driverName,
-          vehicleBrand: quote.vehicleBrand,
-          vehicleColor: quote.vehicleColor,
-          licensePlate: quote.licensePlate,
+          tripId:         activeTripId,
+          driverUid:      quote.driverUid,
+          driverName:     quote.driverName,
+          vehicleBrand:   quote.vehicleBrand,
+          vehicleColor:   quote.vehicleColor,
+          licensePlate:   quote.licensePlate,
+          transportModel: transportModel,
+          senderName:     senderName,
+          senderPhone:    senderPhone,
+          recipientName:  recipientName,
+          recipientPhone: recipientPhone,
         },
       })
     } catch (e: unknown) {
@@ -666,11 +709,7 @@ export default function CustomerHomeScreen() {
               vehicle={vehicle}
               transportModel={transportModel}
               onVehicleChange={setVehicle}
-              onTransportModelChange={(m: TransportModel) => {
-                setTransportModel(m)
-                const model = TRANSPORT_MODELS.find(x => x.key === m) ?? TRANSPORT_MODELS[0]
-                setVehicle(model.vehicles[0].key as VehicleType)
-              }}
+              onTransportModelChange={handleTransportModelChange}
               onConfirm={confirmVehicle}
               insetBottom={insets.bottom}
               t={t}
@@ -738,6 +777,8 @@ export default function CustomerHomeScreen() {
               senderPhone={senderPhone}
               recipientName={recipientName}
               recipientPhone={recipientPhone}
+              onSenderPress={() => pickup && panTo(pickup.lat, pickup.lng)}
+              onRecipientPress={() => dest && panTo(dest.lat, dest.lng)}
               t={t}
             />
           )}
@@ -996,10 +1037,11 @@ function PickupPanel({ text, onChangeText, onClear, savedLocs, onSelectSaved, on
             <TextInput
               style={sub.freightInput}
               value={senderName}
-              onChangeText={onSenderNameChange}
+              onChangeText={(v) => onSenderNameChange(v.replace(/(^|\s)\S/g, c => c.toUpperCase()))}
               placeholder={t('trip.senderNamePlaceholder')}
               placeholderTextColor="#94A3B8"
               autoCapitalize="words"
+              autoFocus={false}
               returnKeyType="next"
             />
           </View>
@@ -1011,7 +1053,7 @@ function PickupPanel({ text, onChangeText, onClear, savedLocs, onSelectSaved, on
               onChangeText={onSenderPhoneChange}
               placeholder={t('trip.senderPhonePlaceholder')}
               placeholderTextColor="#94A3B8"
-              keyboardType="phone-pad"
+              keyboardType="number-pad"
               returnKeyType="done"
             />
           </View>
@@ -1080,10 +1122,11 @@ function DestPanel({ text, onChangeText, onClear, savedLocs, onSelectSaved, onRe
             <TextInput
               style={sub.freightInput}
               value={recipientName}
-              onChangeText={onRecipientNameChange}
+              onChangeText={(v) => onRecipientNameChange(v.replace(/(^|\s)\S/g, c => c.toUpperCase()))}
               placeholder={t('trip.recipientNamePlaceholder')}
               placeholderTextColor="#94A3B8"
               autoCapitalize="words"
+              autoFocus={false}
               returnKeyType="next"
             />
           </View>
@@ -1095,7 +1138,7 @@ function DestPanel({ text, onChangeText, onClear, savedLocs, onSelectSaved, onRe
               onChangeText={onRecipientPhoneChange}
               placeholder={t('trip.recipientPhonePlaceholder')}
               placeholderTextColor="#94A3B8"
-              keyboardType="phone-pad"
+              keyboardType="number-pad"
               returnKeyType="done"
             />
           </View>
@@ -1141,10 +1184,10 @@ function DestPanel({ text, onChangeText, onClear, savedLocs, onSelectSaved, onRe
   )
 }
 
-// Panel 3 – Summary + Note + Book  (horizontal 2-page swipe)
+// Panel 3 – Summary + Note + Book
 const BOOK_PAGE_W = SCREEN_W - 40   // panelContent has paddingHorizontal 20 each side
 
-function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, onBack, insetBottom, transportModel, senderName, senderPhone, recipientName, recipientPhone, t }: any) {
+function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, onBack, insetBottom, transportModel, senderName, senderPhone, recipientName, recipientPhone, onSenderPress, onRecipientPress, t }: any) {
   const isFreight = transportModel === 'freight'
   return (
     <View style={sub.panelFlex}>
@@ -1158,87 +1201,119 @@ function BookPanel({ pickup, dest, note, distKm, onNoteChange, onBook, loading, 
         <View style={{ width: 36 }} />
       </View>
 
-      {/* Horizontally paginated: Page 1 = route info, Page 2 = freight contacts + note */}
-      <ScrollView
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        style={{ flex: 1 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Page 1 – Route summary + swipe hint */}
-        <View style={{ width: BOOK_PAGE_W }}>
-          <View style={sub.routeSummary}>
-            <View style={sub.routeRow}>
-              <Ionicons name="location-sharp" size={16} color={BRAND} style={sub.routeIcon} />
-              <View style={{ flex: 1 }}>
-                <Text style={sub.routePointLabel}>
-                  {isFreight ? t('trip.pickupLabelFreight') : t('trip.pickupLabel')}
-                </Text>
-                <Text style={sub.routeText} numberOfLines={2}>{pickup?.address}</Text>
-              </View>
+      {isFreight ? (
+        /* ── Freight: 4 thẻ dọc – thẻ là sibling trực tiếp trong panelFlex ── */
+        <>
+          {/* Thẻ 1: Thông tin người gửi (tappable → pan to pickup) */}
+          <TouchableOpacity style={sub.freightInfoCard} onPress={onSenderPress} activeOpacity={0.75}>
+            <View style={sub.freightCardHeader}>
+              <Text style={sub.freightCardTitle}>{t('trip.senderLabel')}</Text>
+              <Ionicons name="locate-outline" size={14} color={BRAND} />
             </View>
-            <View style={sub.routeLine} />
-            <View style={sub.routeRow}>
-              <Ionicons name="location-sharp" size={16} color="#EA580C" style={sub.routeIcon} />
-              <View style={{ flex: 1 }}>
-                <Text style={sub.routePointLabel}>
-                  {isFreight ? t('trip.destLabelFreight') : t('trip.destLabel')}
-                </Text>
-                <Text style={sub.routeText} numberOfLines={2}>{dest?.address}</Text>
-              </View>
+            <View style={sub.freightInfoRow}>
+              <Ionicons name="person-outline" size={13} color={BRAND} style={sub.freightInfoIcon} />
+              <Text style={sub.freightInfoName} numberOfLines={1} ellipsizeMode="tail">{senderName}  ·  {senderPhone}</Text>
             </View>
-            {distKm != null && (
-              <>
-                <View style={sub.routeLine} />
-                <View style={[sub.routeRow, { alignItems: 'center' }]}>
-                  <Ionicons name="navigate-outline" size={16} color={BRAND} style={{ flexShrink: 0 }} />
-                  <Text style={[sub.routeText, { marginLeft: 8 }]}>{t('trip.estDistance', { km: distKm })}</Text>
-                </View>
-              </>
-            )}
-          </View>
-          <Text style={sub.swipeHint} numberOfLines={1} adjustsFontSizeToFit>
-            {isFreight ? t('trip.swipeForInfoAndNote') : t('trip.swipeForNote')}
-          </Text>
-        </View>
+            <View style={[sub.freightInfoRow, { marginBottom: 0 }]}>
+              <Ionicons name="location-outline" size={13} color={BRAND} style={sub.freightInfoIcon} />
+              <Text style={sub.freightInfoAddress} numberOfLines={1} ellipsizeMode="tail">{pickup?.address}</Text>
+            </View>
+          </TouchableOpacity>
 
-        {/* Page 2 – Freight contacts (if freight) + Note input */}
-        <View style={{ width: BOOK_PAGE_W }}>
-          {isFreight && (
-            <>
-              <View style={sub.freightSummaryRow}>
-                <Ionicons name="person-outline" size={14} color={BRAND} style={{ marginTop: 2 }} />
-                <View style={{ flex: 1, marginLeft: 6 }}>
-                  <Text style={sub.freightSummaryLabel}>{t('trip.senderLabel')}</Text>
-                  <Text style={sub.freightSummaryValue}>{senderName} – {senderPhone}</Text>
-                </View>
-              </View>
-              <View style={sub.freightSummaryRow}>
-                <Ionicons name="person-outline" size={14} color="#EA580C" style={{ marginTop: 2 }} />
-                <View style={{ flex: 1, marginLeft: 6 }}>
-                  <Text style={sub.freightSummaryLabel}>{t('trip.recipientLabel')}</Text>
-                  <Text style={sub.freightSummaryValue}>{recipientName} – {recipientPhone}</Text>
-                </View>
-              </View>
-              <View style={[sub.routeLine, { marginVertical: 8 }]} />
-            </>
+          {/* Thẻ 2: Thông tin người nhận (tappable → pan to dest) */}
+          <TouchableOpacity style={sub.freightInfoCard} onPress={onRecipientPress} activeOpacity={0.75}>
+            <View style={sub.freightCardHeader}>
+              <Text style={sub.freightCardTitle}>{t('trip.recipientLabel')}</Text>
+              <Ionicons name="locate-outline" size={14} color={BRAND} />
+            </View>
+            <View style={sub.freightInfoRow}>
+              <Ionicons name="person-outline" size={13} color={BRAND} style={sub.freightInfoIcon} />
+              <Text style={sub.freightInfoName} numberOfLines={1} ellipsizeMode="tail">{recipientName}  ·  {recipientPhone}</Text>
+            </View>
+            <View style={[sub.freightInfoRow, { marginBottom: 0 }]}>
+              <Ionicons name="location-outline" size={13} color={BRAND} style={sub.freightInfoIcon} />
+              <Text style={sub.freightInfoAddress} numberOfLines={1} ellipsizeMode="tail">{dest?.address}</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Thẻ 3: Khoảng cách */}
+          {distKm != null && (
+            <View style={sub.freightDistCard}>
+              <Ionicons name="navigate-outline" size={14} color="#64748B" />
+              <Text style={sub.freightInfoDist}>{t('trip.estDistance', { km: distKm })}</Text>
+            </View>
           )}
-          <Text style={sub.sectionLabel}>{t('trip.note')}</Text>
-          <View style={sub.noteWrap}>
+
+          {/* Thẻ 4: Ghi chú */}
+          <View style={sub.freightNoteCard}>
+            <Text style={sub.freightNoteLabel}>{t('trip.note')} <Text style={{ fontWeight: '400', color: '#B45309' }}>{note.length}/100</Text></Text>
             <TextInput
-              style={sub.noteInput}
+              style={[sub.noteInput, { paddingVertical: 0 }]}
               value={note}
               onChangeText={onNoteChange}
               placeholder={t('trip.notePlaceholder')}
               placeholderTextColor="#94A3B8"
               multiline
-              numberOfLines={3}
+              numberOfLines={2}
               maxLength={100}
             />
           </View>
-        </View>
-      </ScrollView>
+
+          <View style={{ flex: 1 }} />
+        </>
+      ) : (
+        /* ── Passenger: 4 thẻ dọc giống freight ── */
+        <>
+          {/* Thẻ 1: Điểm đón (tappable → pan to pickup) */}
+          <TouchableOpacity style={sub.freightInfoCard} onPress={onSenderPress} activeOpacity={0.75}>
+            <View style={sub.freightCardHeader}>
+              <Text style={sub.freightCardTitle}>{t('trip.pickupLabel')}</Text>
+              <Ionicons name="locate-outline" size={14} color={BRAND} />
+            </View>
+            <View style={[sub.freightInfoRow, { marginBottom: 0 }]}>
+              <Ionicons name="location-outline" size={13} color={BRAND} style={sub.freightInfoIcon} />
+              <Text style={sub.freightInfoAddress} numberOfLines={1} ellipsizeMode="tail">{pickup?.address}</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Thẻ 2: Điểm đến (tappable → pan to dest) */}
+          <TouchableOpacity style={sub.freightInfoCard} onPress={onRecipientPress} activeOpacity={0.75}>
+            <View style={sub.freightCardHeader}>
+              <Text style={sub.freightCardTitle}>{t('trip.destLabel')}</Text>
+              <Ionicons name="locate-outline" size={14} color={BRAND} />
+            </View>
+            <View style={[sub.freightInfoRow, { marginBottom: 0 }]}>
+              <Ionicons name="location-outline" size={13} color={BRAND} style={sub.freightInfoIcon} />
+              <Text style={sub.freightInfoAddress} numberOfLines={1} ellipsizeMode="tail">{dest?.address}</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Thẻ 3: Khoảng cách */}
+          {distKm != null && (
+            <View style={sub.freightDistCard}>
+              <Ionicons name="navigate-outline" size={14} color="#64748B" />
+              <Text style={sub.freightInfoDist}>{t('trip.estDistance', { km: distKm })}</Text>
+            </View>
+          )}
+
+          {/* Thẻ 4: Ghi chú */}
+          <View style={sub.freightNoteCard}>
+            <Text style={sub.freightNoteLabel}>{t('trip.note')} <Text style={{ fontWeight: '400', color: '#B45309' }}>{note.length}/100</Text></Text>
+            <TextInput
+              style={[sub.noteInput, { paddingVertical: 0 }]}
+              value={note}
+              onChangeText={onNoteChange}
+              placeholder={t('trip.notePlaceholder')}
+              placeholderTextColor="#94A3B8"
+              multiline
+              numberOfLines={2}
+              maxLength={100}
+            />
+          </View>
+
+          <View style={{ flex: 1 }} />
+        </>
+      )}
 
       <TouchableOpacity
         style={[sub.confirmBtn, { marginBottom: (insetBottom || 0) + 16 }, loading && { opacity: 0.7 }]}
@@ -1473,11 +1548,44 @@ const sub = StyleSheet.create({
   },
   freightInput:       { flex: 1, fontSize: 13, color: '#0F172A', paddingVertical: 0 },
 
-  // Freight summary (step 3, page 2)
+  // Freight summary (step 3, page 2) – legacy, kept for safety
   freightSummaryRow:   { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
   freightSummaryLabel: { fontSize: 10, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 1 },
   freightSummaryValue: { fontSize: 13, color: '#0F172A', fontWeight: '600' },
   freightSummaryPhone: { fontSize: 12, color: '#64748B', marginTop: 1 },
+
+  // Freight step 3 – cards
+  freightInfoCard: {
+    backgroundColor: '#EEF4FF',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  freightCardHeader:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  freightCardTitle:   { fontSize: 11, fontWeight: '700', color: BRAND, textTransform: 'uppercase', letterSpacing: 0.5 },
+  freightInfoRow:     { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 4 },
+  freightInfoIcon:    { marginTop: 2, marginRight: 6, flexShrink: 0 },
+  freightInfoName:    { flex: 1, fontSize: 14, fontWeight: '600', color: BRAND, lineHeight: 20 },
+  freightInfoAddress: { flex: 1, fontSize: 13, color: '#475569', lineHeight: 19 },
+  freightDistCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 8, marginBottom: 8,
+  },
+  freightInfoDist:    { fontSize: 13, color: '#475569', fontWeight: '600' },
+  freightInfoDivider: { height: 1, backgroundColor: '#E2E8F0', marginVertical: 8 },
+
+  // Freight step 3 – note card
+  freightNoteCard: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 0,
+  },
+  freightNoteLabel: { fontSize: 11, fontWeight: '700', color: '#92400E', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
 
   // Quotes panel
   quotesHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, marginTop: 4 },

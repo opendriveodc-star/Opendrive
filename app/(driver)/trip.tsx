@@ -27,11 +27,13 @@ import type {
 } from '../../src/types'
 
 const SCREEN_W = Dimensions.get('window').width
+const SCREEN_H = Dimensions.get('window').height
 const INFO_PAGE_W = SCREEN_W - 40  // panel paddingHorizontal 20 each side
 
 const BRAND          = '#1A2E5E'
 const BRAND_LIGHT    = '#E8EDF6'
 const SOS_SECTION_H  = 220
+const PANEL_H        = Math.round(SCREEN_H * 0.82)
 
 export default function TripScreen() {
   const { t }    = useTranslation()
@@ -76,6 +78,7 @@ export default function TripScreen() {
   const panelAnim        = useRef(new Animated.Value(SOS_SECTION_H)).current
   const panelLevelRef    = useRef(0)
   const panStartValRef   = useRef(SOS_SECTION_H)
+  const bottomPadRef     = useRef(PANEL_H - SOS_SECTION_H)
   const panResponder     = useRef(PanResponder.create({
     onStartShouldSetPanResponder: ()        => true,
     onMoveShouldSetPanResponder:  (_, gs)   => Math.abs(gs.dy) > 4,
@@ -88,7 +91,11 @@ export default function TripScreen() {
     onPanResponderRelease: (_, gs) => {
       const expand = panelLevelRef.current === 1 ? gs.dy <= 30 : gs.dy <= -30
       panelLevelRef.current = expand ? 1 : 0
-      Animated.spring(panelAnim, { toValue: expand ? 0 : SOS_SECTION_H, useNativeDriver: true, bounciness: 4 }).start()
+      Animated.spring(panelAnim, { toValue: expand ? 0 : SOS_SECTION_H, useNativeDriver: true, bounciness: 4 }).start(() => {
+        const pad = expand ? PANEL_H : PANEL_H - SOS_SECTION_H
+        bottomPadRef.current = pad
+        mapRef.current?.setBottomPadding(pad)
+      })
     },
   })).current
 
@@ -118,13 +125,10 @@ export default function TripScreen() {
           if (info?.customerFcmToken) customerFcmTokenRef.current = info.customerFcmToken as string
         } catch {}
 
-        // Đọc freight_info nếu là tài xế giao hàng
-        if (drv?.transportModel === 'freight') {
-          try {
-            const fi = await rtdb.get<FreightInfo>(`trips/${trip.tripId}/freight_info`)
-            if (fi) setFreightInfo(fi)
-          } catch {}
-        }
+        try {
+          const fi = await rtdb.get<FreightInfo>(`trips/${trip.tripId}/freight_info`)
+          if (fi) setFreightInfo(fi)
+        } catch {}
 
         // Kiểm tra khoảng cách đến điểm đón mỗi 5s
         if (trip.pickupLat && trip.pickupLng) {
@@ -143,7 +147,7 @@ export default function TripScreen() {
                 if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
               }
             } catch {}
-          }, 5000)
+          }, 15000)
         } else {
           setNearPickup(true) // Không có tọa độ → cho phép bấm luôn
         }
@@ -204,14 +208,23 @@ export default function TripScreen() {
   // Ghi trip_info lên RTDB 1 lần
   useEffect(() => {
     if (!pendingTrip || !driverInfo) return
-    rtdb.set(`trips/${pendingTrip.tripId}/trip_info`, {
-      driverName:     driverInfo.name,
-      driverPhone:    driverInfo.phone,
-      vehicleBrand:   driverInfo.vehicleBrand,
-      vehicleColor:   driverInfo.vehicleColor ?? '',
-      licensePlate:   driverInfo.licensePlate,
-      driverFcmToken: driverInfo.fcmToken ?? '',
-    }).catch(() => {})
+    const write = async () => {
+      let fcmToken = ''
+      try {
+        const td = await Notifications.getDevicePushTokenAsync()
+        fcmToken = td.data as string
+      } catch {}
+      if (!fcmToken) fcmToken = driverInfo.fcmToken ?? ''
+      rtdb.set(`trips/${pendingTrip.tripId}/trip_info`, {
+        driverName:     driverInfo.name,
+        driverPhone:    driverInfo.phone,
+        vehicleBrand:   driverInfo.vehicleBrand,
+        vehicleColor:   driverInfo.vehicleColor ?? '',
+        licensePlate:   driverInfo.licensePlate,
+        driverFcmToken: fcmToken,
+      }).catch(() => {})
+    }
+    write()
   }, [pendingTrip, driverInfo])
 
   // Bắt đầu gửi vị trí qua RTDB ngay khi vào màn hình
@@ -222,11 +235,18 @@ export default function TripScreen() {
     intervalRef.current = setInterval(async () => {
       if (pickedUpRef.current) return
       try {
+        // Cập nhật map ngay bằng last known (instant) — không chờ GPS
+        const last = await Location.getLastKnownPositionAsync()
+        if (last) {
+          mapRef.current?.updateDriverMarker(last.coords.latitude, last.coords.longitude)
+          mapRef.current?.panTo(last.coords.latitude, last.coords.longitude, 0, bottomPadRef.current)
+        }
+        // Lấy GPS chính xác để gửi RTDB + cập nhật lại marker
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
         const lat = loc.coords.latitude
         const lng = loc.coords.longitude
         mapRef.current?.updateDriverMarker(lat, lng)
-        mapRef.current?.panTo(lat, lng)
+        mapRef.current?.panTo(lat, lng, 0, bottomPadRef.current)
         await rtdb.set(`trips/${tripId}/location`, { lat, lng, timestamp: Date.now() })
       } catch {}
     }, LOCATION.RTDB_INTERVAL_MS)
@@ -385,7 +405,7 @@ export default function TripScreen() {
           if (proximityRef.current) { clearInterval(proximityRef.current); proximityRef.current = null }
         }
       } catch {}
-    }, 5000)
+    }, 15000)
   }
 
   function dismissNavNotif() {
@@ -533,10 +553,10 @@ export default function TripScreen() {
               if (trip?.pickupLat && trip?.pickupLng) {
                 mapRef.current?.showCustomerMarker(trip.pickupLat, trip.pickupLng)
                 if (dPos) {
-                  // paddingBottom 320 để tránh panel phía dưới che mất pin
-                  mapRef.current?.fitBoundsToMarkers(dPos.lat, dPos.lng, trip.pickupLat, trip.pickupLng, 320)
+                  mapRef.current?.fitBoundsToMarkers(dPos.lat, dPos.lng, trip.pickupLat, trip.pickupLng, bottomPadRef.current)
                 }
               }
+              mapRef.current?.setBottomPadding(bottomPadRef.current)
             }}
           />
         ) : (
@@ -579,130 +599,115 @@ export default function TripScreen() {
           <Text style={styles.handleHint}>Trượt lên để thấy nút SOS</Text>
         </View>
 
-        {/* Info section — 2 pages horizontal for freight, single for passenger */}
-        {driverInfo?.transportModel === 'freight' ? (
-          <ScrollView
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            style={{ marginBottom: 8 }}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* Page 1 – price + addresses + note */}
-            <View style={{ width: INFO_PAGE_W }}>
-              <View style={styles.priceRow}>
-                <View>
-                  <Text style={styles.priceLabel}>{t('online.priceLabel')}</Text>
-                  <Text style={styles.priceValue}>{priceFormatted} đ</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.customerChip}
-                  onPress={() => Linking.openURL(`tel:${pendingTrip.customerPhone}`)}
-                  activeOpacity={0.75}
-                >
-                  <Ionicons name="call-outline" size={13} color={BRAND} />
-                  <Text style={styles.customerChipText}>{`***${pendingTrip.customerPhone.slice(-3)}`}</Text>
-                </TouchableOpacity>
-              </View>
-              {!!pickupAddress && (
-                <View style={styles.addressRow}>
-                  <Ionicons name="location-sharp" size={14} color={BRAND} style={{ marginTop: 2, flexShrink: 0 }} />
-                  <Text style={styles.addressText} numberOfLines={2}>{pickupAddress}</Text>
-                </View>
-              )}
-              {!!destAddress && (
-                <View style={styles.addressRow}>
-                  <Ionicons name="location-sharp" size={14} color="#94A3B8" style={{ marginTop: 2, flexShrink: 0 }} />
-                  <Text style={styles.addressText} numberOfLines={2}>{destAddress}</Text>
-                </View>
-              )}
-              {!!tripNote && (
-                <View style={[styles.addressRow, { backgroundColor: '#FFFBEB' }]}>
-                  <Ionicons name="chatbubble-ellipses-outline" size={14} color="#F59E0B" style={{ marginTop: 2, flexShrink: 0 }} />
-                  <Text style={[styles.addressText, { color: '#92400E', fontStyle: 'italic' }]} numberOfLines={3}>
-                    <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Ghi chú: </Text>{tripNote}
-                  </Text>
-                </View>
-              )}
-              <Text style={styles.freightSwipeHint}>{t('trip.freightContactsPage')} →</Text>
-            </View>
-
-            {/* Page 2 – freight contacts */}
-            <View style={{ width: INFO_PAGE_W }}>
-              <Text style={styles.freightPageTitle}>{t('trip.freightContactsPage')}</Text>
-              {/* Người giao */}
-              <View style={styles.freightContactCard}>
-                <View style={styles.freightContactHeader}>
-                  <Ionicons name="arrow-up-circle-outline" size={15} color={BRAND} />
-                  <Text style={styles.freightContactRole}>{t('trip.senderLabel')}</Text>
-                </View>
-                <Text style={styles.freightContactName}>{freightInfo?.senderName ?? '—'}</Text>
-                <TouchableOpacity
-                  style={styles.freightCallBtn}
-                  onPress={() => freightInfo?.senderPhone && Linking.openURL(`tel:${freightInfo.senderPhone}`)}
-                  activeOpacity={0.75}
-                >
-                  <Ionicons name="call-outline" size={13} color={BRAND} />
-                  <Text style={styles.freightCallText}>{freightInfo?.senderPhone ?? '—'}</Text>
-                </TouchableOpacity>
-              </View>
-              {/* Người nhận */}
-              <View style={[styles.freightContactCard, { marginTop: 8 }]}>
-                <View style={styles.freightContactHeader}>
-                  <Ionicons name="arrow-down-circle-outline" size={15} color="#EA580C" />
-                  <Text style={[styles.freightContactRole, { color: '#EA580C' }]}>{t('trip.recipientLabel')}</Text>
-                </View>
-                <Text style={styles.freightContactName}>{freightInfo?.recipientName ?? '—'}</Text>
-                <TouchableOpacity
-                  style={[styles.freightCallBtn, { borderColor: '#EA580C' }]}
-                  onPress={() => freightInfo?.recipientPhone && Linking.openURL(`tel:${freightInfo.recipientPhone}`)}
-                  activeOpacity={0.75}
-                >
-                  <Ionicons name="call-outline" size={13} color="#EA580C" />
-                  <Text style={[styles.freightCallText, { color: '#EA580C' }]}>{freightInfo?.recipientPhone ?? '—'}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </ScrollView>
-        ) : (
+        {/* Info section */}
+        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        {!!freightInfo ? (
           <>
-            {/* Passenger: existing single-page layout */}
-            <View style={styles.priceRow}>
-              <View>
-                <Text style={styles.priceLabel}>{t('online.priceLabel')}</Text>
-                <Text style={styles.priceValue}>{priceFormatted} đ</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.customerChip}
-                onPress={() => Linking.openURL(`tel:${pendingTrip.customerPhone}`)}
-                activeOpacity={0.75}
-              >
-                <Ionicons name="call-outline" size={13} color={BRAND} />
+            {/* Thẻ 1: Giá báo */}
+            <View style={[styles.addressRow, { alignItems: 'center' }]}>
+              <Ionicons name="cash-outline" size={18} color={BRAND} style={{ flexShrink: 0 }} />
+              <Text style={[styles.priceValue, { flex: 1, marginLeft: 6 }]}>{priceFormatted} đ</Text>
+              <TouchableOpacity style={styles.customerChip} onPress={() => Linking.openURL(`tel:${pendingTrip.customerPhone}`)} activeOpacity={0.75}>
+                <Ionicons name="call-outline" size={13} color="#fff" />
                 <Text style={styles.customerChipText}>{`***${pendingTrip.customerPhone.slice(-3)}`}</Text>
               </TouchableOpacity>
             </View>
-            {!!pickupAddress && (
-              <View style={styles.addressRow}>
-                <Ionicons name="location-sharp" size={14} color={BRAND} style={{ marginTop: 2, flexShrink: 0 }} />
-                <Text style={styles.addressText} numberOfLines={2}>{pickupAddress}</Text>
+
+            {/* Thẻ 2: Người gửi */}
+            <View style={[styles.addressRow, { flexDirection: 'column', alignItems: 'stretch', gap: 3 }]}>
+              <Text style={styles.contactCardTitle}>Thông tin người gửi</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="person-outline" size={14} color={BRAND} style={{ flexShrink: 0 }} />
+                <Text style={[styles.addressText, { flex: 1, fontWeight: '600' }]} numberOfLines={1}>{freightInfo.senderName}</Text>
+                <TouchableOpacity style={styles.customerChip} onPress={() => Linking.openURL(`tel:${freightInfo.senderPhone}`)} activeOpacity={0.75}>
+                  <Ionicons name="call-outline" size={13} color="#fff" />
+                  <Text style={styles.customerChipText}>{`***${freightInfo.senderPhone.slice(-3)}`}</Text>
+                </TouchableOpacity>
               </View>
-            )}
-            {!!destAddress && (
-              <View style={styles.addressRow}>
-                <Ionicons name="location-sharp" size={14} color="#94A3B8" style={{ marginTop: 2, flexShrink: 0 }} />
-                <Text style={styles.addressText} numberOfLines={2}>{destAddress}</Text>
+              {!!pickupAddress && (
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                  <Ionicons name="location-outline" size={13} color="#64748B" style={{ marginTop: 2, flexShrink: 0 }} />
+                  <Text style={[styles.addressText, { color: '#64748B', fontSize: 12 }]} numberOfLines={1}>{pickupAddress}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Thẻ 3: Người nhận */}
+            <View style={[styles.addressRow, { flexDirection: 'column', alignItems: 'stretch', gap: 3 }]}>
+              <Text style={styles.contactCardTitle}>Thông tin người nhận</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="person-outline" size={14} color={BRAND} style={{ flexShrink: 0 }} />
+                <Text style={[styles.addressText, { flex: 1, fontWeight: '600' }]} numberOfLines={1}>{freightInfo.recipientName}</Text>
+                <TouchableOpacity style={styles.customerChip} onPress={() => Linking.openURL(`tel:${freightInfo.recipientPhone}`)} activeOpacity={0.75}>
+                  <Ionicons name="call-outline" size={13} color="#fff" />
+                  <Text style={styles.customerChipText}>{`***${freightInfo.recipientPhone.slice(-3)}`}</Text>
+                </TouchableOpacity>
               </View>
-            )}
+              {!!destAddress && (
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                  <Ionicons name="location-outline" size={13} color="#64748B" style={{ marginTop: 2, flexShrink: 0 }} />
+                  <Text style={[styles.addressText, { color: '#64748B', fontSize: 12 }]} numberOfLines={1}>{destAddress}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Thẻ 4: Ghi chú */}
             {!!tripNote && (
               <View style={[styles.addressRow, { backgroundColor: '#FFFBEB' }]}>
                 <Ionicons name="chatbubble-ellipses-outline" size={14} color="#F59E0B" style={{ marginTop: 2, flexShrink: 0 }} />
-                <Text style={[styles.addressText, { color: '#92400E', fontStyle: 'italic' }]} numberOfLines={3}>
+                <Text style={[styles.addressText, { color: '#92400E', fontStyle: 'italic' }]} numberOfLines={2}>
+                  <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Ghi chú: </Text>{tripNote}
+                </Text>
+              </View>
+            )}
+          </>
+        ) : (
+          <>
+            {/* Passenger layout — same card format as freight */}
+            {/* Thẻ 1: Giá + gọi khách */}
+            <View style={[styles.addressRow, { alignItems: 'center' }]}>
+              <Ionicons name="cash-outline" size={18} color={BRAND} style={{ flexShrink: 0 }} />
+              <Text style={[styles.priceValue, { flex: 1, marginLeft: 6 }]}>{priceFormatted} đ</Text>
+              <TouchableOpacity style={styles.customerChip} onPress={() => Linking.openURL(`tel:${pendingTrip.customerPhone}`)} activeOpacity={0.75}>
+                <Ionicons name="call-outline" size={13} color="#fff" />
+                <Text style={styles.customerChipText}>{`***${pendingTrip.customerPhone.slice(-3)}`}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Thẻ 2: Điểm đón */}
+            {!!pickupAddress && (
+              <View style={[styles.addressRow, { flexDirection: 'column', alignItems: 'stretch', gap: 3 }]}>
+                <Text style={styles.contactCardTitle}>Điểm đón</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                  <Ionicons name="location-outline" size={14} color={BRAND} style={{ marginTop: 2, flexShrink: 0 }} />
+                  <Text style={styles.addressText} numberOfLines={2}>{pickupAddress}</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Thẻ 3: Điểm đến */}
+            {!!destAddress && (
+              <View style={[styles.addressRow, { flexDirection: 'column', alignItems: 'stretch', gap: 3 }]}>
+                <Text style={styles.contactCardTitle}>Điểm đến</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                  <Ionicons name="location-outline" size={14} color="#94A3B8" style={{ marginTop: 2, flexShrink: 0 }} />
+                  <Text style={styles.addressText} numberOfLines={2}>{destAddress}</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Thẻ 4: Ghi chú */}
+            {!!tripNote && (
+              <View style={[styles.addressRow, { backgroundColor: '#FFFBEB' }]}>
+                <Ionicons name="chatbubble-ellipses-outline" size={14} color="#F59E0B" style={{ marginTop: 2, flexShrink: 0 }} />
+                <Text style={[styles.addressText, { color: '#92400E', fontStyle: 'italic' }]} numberOfLines={2}>
                   <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Ghi chú: </Text>{tripNote}
                 </Text>
               </View>
             )}
           </>
         )}
+        </ScrollView>
 
         <View style={styles.btnGroup}>
           {/* Dẫn đường Google Maps */}
@@ -823,6 +828,7 @@ const styles = StyleSheet.create({
   // Bottom panel
   panel: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
+    minHeight: SCREEN_H * 0.82,
     backgroundColor: '#fff',
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     paddingHorizontal: 20, paddingTop: 12,
@@ -847,22 +853,23 @@ const styles = StyleSheet.create({
 
   priceRow: {
     flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', marginBottom: 12,
+    justifyContent: 'space-between', marginBottom: 6,
   },
   priceLabel: { fontSize: 11, fontWeight: '600', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
-  priceValue: { fontSize: 26, fontWeight: '800', color: BRAND },
+  priceValue: { fontSize: 20, fontWeight: '800', color: BRAND },
 
   customerChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: '#E8EDF6', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20,
+    backgroundColor: BRAND, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 20,
   },
-  customerChipText: { fontSize: 13, fontWeight: '600', color: BRAND },
+  customerChipText: { fontSize: 12, fontWeight: '600', color: '#fff' },
 
   addressRow: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 6,
-    backgroundColor: '#F8FAFC', borderRadius: 10, padding: 10, marginBottom: 14,
+    backgroundColor: '#F8FAFC', borderRadius: 10, padding: 8, marginBottom: 5,
   },
-  addressText: { flex: 1, fontSize: 13, color: '#334155', lineHeight: 18 },
+  addressText: { flex: 1, fontSize: 13, color: '#334155', lineHeight: 17 },
+  contactCardTitle: { fontSize: 11, fontWeight: '700', color: BRAND, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 },
 
   // Buttons
   btnGroup: { gap: 10 },

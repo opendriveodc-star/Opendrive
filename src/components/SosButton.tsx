@@ -7,8 +7,8 @@ import { View, Text, Animated, StyleSheet, Pressable, Vibration } from 'react-na
 const BTN_SIZE = 72
 const WAVE_D   = 164
 const NAVY     = '#1A2E5E'
-const RED      = 'rgba(239, 68, 68, 0.62)'   // đỏ lợt, trong suốt
-const RED_DIM  = 'rgba(220, 38, 38, 0.11)'
+const RED      = '#F87171'
+const RED_DIM  = 'rgba(248, 113, 113, 0.18)'
 
 // Nút + sóng cùng tâm — tâm tại (WAVE_D/2, WAVE_D/2)
 const BTN_LEFT       = (WAVE_D - BTN_SIZE) / 2   // 46
@@ -84,7 +84,7 @@ export default function SosButton({ onTriggered, disabled = false }: SosButtonPr
     width: WAVE_D, height: WAVE_D, borderRadius: WAVE_D / 2,
     backgroundColor: RED_DIM,
     transform: [{
-      scale: v.interpolate({ inputRange: [0, 1], outputRange: [BTN_SIZE / WAVE_D, 1] }),
+      scale: v.interpolate({ inputRange: [0, 1], outputRange: [(BTN_SIZE + 8) / WAVE_D, 1] }),
     }],
     opacity: v.interpolate({ inputRange: [0, 0.25, 1], outputRange: [0.9, 0.45, 0] }),
   })
@@ -136,7 +136,7 @@ const s = StyleSheet.create({
   countdown: {
     position: 'absolute',
     textAlign: 'center',
-    fontSize: 32, fontWeight: '900', color: '#DC2626',
+    fontSize: 32, fontWeight: '900', color: '#F87171',
   },
 
   btn: {
@@ -146,13 +146,14 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.18, shadowRadius: 6, elevation: 4,
+    zIndex: 1,
   },
-  btnSent:  { backgroundColor: 'rgba(148,163,184,0.7)', shadowOpacity: 0, elevation: 0 },
+  btnSent:  { backgroundColor: NAVY, shadowOpacity: 0, elevation: 0 },
   sosText:  { color: '#fff', fontSize: 22, fontWeight: '900', letterSpacing: 2 },
 
   label: {
     marginTop: 10, fontSize: 13, color: '#475569',
     textAlign: 'center', lineHeight: 20, fontWeight: '500',
   },
-  labelSent: { color: '#DC2626', fontWeight: '700' },
+  labelSent: { color: NAVY, fontWeight: '700' },
 })

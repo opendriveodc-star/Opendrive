@@ -21,7 +21,7 @@ import { getCurrentLocation, distanceKm, geohashForQuery } from '../../src/servi
 import { LOCATION } from '../../src/constants'
 import { hasEnoughODC, getODCBalance } from '../../src/services/odc'
 import { maskPhone } from '../../src/utils/format'
-import { savePendingTrip } from '../../src/utils/storage'
+import { savePendingTrip, getDriverInfo } from '../../src/utils/storage'
 import MapView from '../../src/components/MapView'
 import type { MapViewHandle } from '../../src/components/MapView'
 import {
@@ -117,9 +117,15 @@ export default function OnlineScreen() {
     l1YRef.current = Math.max(0, h - L1_VISIBLE_H)
   }, [insets.top, insets.bottom])
 
-  // Reload settings mỗi khi quay lại màn hình (từ Settings)
+  // Reload driver info + settings mỗi khi quay lại màn hình (từ Settings / driver-info)
   useFocusEffect(
     React.useCallback(() => {
+      getDriverInfo().then(info => {
+        if (!info) return
+        driverInfoRef.current = info
+        setDriverName(info.name)
+        setDriverRating(info.rating)
+      })
       AsyncStorage.getItem(AsyncStorageKey.AUTO_QUOTE_SETTINGS).then(raw => {
         if (!raw) return
         const s = { ...JSON.parse(raw) as AutoQuoteSettings, rainModeEnabled: false }
@@ -172,10 +178,9 @@ export default function OnlineScreen() {
     }).start()
   }, [insets.top])
 
-  // Navigate rời màn hình – về home dùng back() để slide animation chạy sạch
   function navigateAway(path: string) {
     if (path === '/(driver)/home') {
-      router.back()
+      router.replace('/(driver)/home')
     } else {
       Animated.timing(sheetAnim, {
         toValue: sheetHRef.current + 80,
@@ -524,9 +529,10 @@ export default function OnlineScreen() {
       setDriverPendingTrip(drv.uid, true).catch(() => {})
       console.log('[selected] updateDriverStatus busy...')
       await updateDriverStatus(drv.uid, 'busy')
+      const freshInfo = await getDriverInfo()
       await SecureStore.setItemAsync(
         SecureStoreKey.DRIVER_INFO,
-        JSON.stringify({ ...drv, status: 'busy' as DriverStatus }),
+        JSON.stringify({ ...(freshInfo ?? drv), status: 'busy' as DriverStatus }),
       )
       console.log('[selected] navigate trip...')
       navigateAway('/(driver)/trip')
@@ -542,9 +548,10 @@ export default function OnlineScreen() {
     if (!drv) return
     try {
       await updateDriverStatus(drv.uid, 'offline')
+      const freshInfo = await getDriverInfo()
       await SecureStore.setItemAsync(
         SecureStoreKey.DRIVER_INFO,
-        JSON.stringify({ ...drv, status: 'offline' as DriverStatus }),
+        JSON.stringify({ ...(freshInfo ?? drv), status: 'offline' as DriverStatus }),
       )
       navigateAway('/(driver)/home')
     } catch {

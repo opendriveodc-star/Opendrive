@@ -36,8 +36,10 @@ const STATUS_CONFIG: Record<TripStatus, { label: string; icon: string }> = {
 export default function TrackingScreen() {
   const { t }      = useTranslation()
   const insets     = useSafeAreaInsets()
-  const { tripId, driverName, vehicleBrand, vehicleColor, licensePlate } = useLocalSearchParams<{
+  const { tripId, driverName, vehicleBrand, vehicleColor, licensePlate, transportModel,
+          senderName, senderPhone, recipientName, recipientPhone } = useLocalSearchParams<{
     tripId: string; driverName: string; vehicleBrand: string; vehicleColor: string; licensePlate: string
+    transportModel: string; senderName: string; senderPhone: string; recipientName: string; recipientPhone: string
   }>()
 
   // Khởi tạo ngay từ params — không cần chờ poll trip_info
@@ -49,14 +51,12 @@ export default function TrackingScreen() {
   const [driverLng,  setDriverLng]  = useState<number>(106.7009)
   const [tripStatus, setTripStatus] = useState<TripStatus>('going_to_pickup')
   const [driverInfo, setDriverInfo] = useState(initDriverInfo)
-  const [canCancel,    setCanCancel]    = useState(true)
   const [sosSent,      setSosSent]      = useState(false)
   const [driverPhone,  setDriverPhone]  = useState<string>('')
 
   const driverPhoneRef   = useRef<string>('')
   const customerPhoneRef = useRef<string>('')
 
-  const startedAtRef       = useRef<number>(Date.now())
   const mapRef             = useRef<MapViewHandle>(null)
   const completedRef       = useRef(false)
   const pickupLatRef       = useRef<number | null>(null)
@@ -67,6 +67,10 @@ export default function TrackingScreen() {
   const arrivedNotifIdRef  = useRef<string | null>(null)
   const driverFcmTokenRef  = useRef<string>('')
   const cancelledHandledRef = useRef(false)
+  const panelHRef           = useRef(0)
+  const bottomPadRef        = useRef(0)
+  const driverLatRef        = useRef(10.7769)
+  const driverLngRef        = useRef(106.7009)
 
   const panelAnim       = useRef(new Animated.Value(SOS_SECTION_H)).current
   const panelLevelRef   = useRef(0)
@@ -83,7 +87,10 @@ export default function TrackingScreen() {
     onPanResponderRelease: (_, gs) => {
       const expand = panelLevelRef.current === 1 ? gs.dy <= 30 : gs.dy <= -30
       panelLevelRef.current = expand ? 1 : 0
-      Animated.spring(panelAnim, { toValue: expand ? 0 : SOS_SECTION_H, useNativeDriver: true, bounciness: 4 }).start()
+      Animated.spring(panelAnim, { toValue: expand ? 0 : SOS_SECTION_H, useNativeDriver: true, bounciness: 4 }).start(() => {
+        bottomPadRef.current = expand ? panelHRef.current : panelHRef.current - SOS_SECTION_H
+        mapRef.current?.panTo(driverLatRef.current, driverLngRef.current, 0, bottomPadRef.current)
+      })
     },
   })).current
 
@@ -109,17 +116,6 @@ export default function TrackingScreen() {
     }).catch(() => {})
   }, [tripId])
 
-  // Grace period
-  useEffect(() => {
-    const check = setInterval(() => {
-      if (Date.now() - startedAtRef.current > TRIP.GRACE_PERIOD_MINUTES * 60 * 1000) {
-        setCanCancel(false)
-        clearInterval(check)
-      }
-    }, 5000)
-    return () => clearInterval(check)
-  }, [])
-
   // RTDB polling: vị trí + status + trip_info
   useEffect(() => {
     if (!tripId) return
@@ -130,8 +126,10 @@ export default function TrackingScreen() {
         if (loc?.lat != null) {
           setDriverLat(loc.lat)
           setDriverLng(loc.lng)
+          driverLatRef.current = loc.lat
+          driverLngRef.current = loc.lng
           mapRef.current?.updateDriverMarker(loc.lat, loc.lng)
-          mapRef.current?.panTo(loc.lat, loc.lng)
+          mapRef.current?.panTo(loc.lat, loc.lng, 0, bottomPadRef.current)
         }
       } catch {}
     }, 3000)
@@ -238,15 +236,20 @@ export default function TrackingScreen() {
         const info = tripInfoRef.current
         if (info) {
           await AsyncStorage.setItem(RETRY_TRIP_KEY, JSON.stringify({
-            vehicleType:   info.vehicleType,
-            pickupLat:     info.pickupLat,
-            pickupLng:     info.pickupLng,
-            pickupAddress: info.pickupAddress ?? '',
-            dropLat:       info.dropLat,
-            dropLng:       info.dropLng,
-            destAddress:   info.destAddress ?? '',
-            note:          info.note ?? '',
-            estimatedKm:   info.estimatedKm,
+            vehicleType:    info.vehicleType,
+            transportModel: transportModel ?? 'passenger',
+            pickupLat:      info.pickupLat,
+            pickupLng:      info.pickupLng,
+            pickupAddress:  info.pickupAddress ?? '',
+            dropLat:        info.dropLat,
+            dropLng:        info.dropLng,
+            destAddress:    info.destAddress ?? '',
+            note:           info.note ?? '',
+            estimatedKm:    info.estimatedKm,
+            senderName:     senderName ?? '',
+            senderPhone:    senderPhone ?? '',
+            recipientName:  recipientName ?? '',
+            recipientPhone: recipientPhone ?? '',
           })).catch(() => {})
         }
         if (tripId) rtdb.delete(`trips/${tripId}`).catch(() => {})
@@ -325,6 +328,17 @@ export default function TrackingScreen() {
     sosAlert({ driverPhone: dPhone, customerPhone: cPhone, lat, lng, triggeredBy: 'customer', memo27bytes }).catch(() => {})
   }
 
+  function handleOpenMaps() {
+    const info = tripInfoRef.current
+    const lat  = tripStatus === 'going_to_pickup' ? pickupLatRef.current      : info?.dropLat ?? null
+    const lng  = tripStatus === 'going_to_pickup' ? pickupLngRef.current      : info?.dropLng ?? null
+    if (!lat || !lng) return
+    const mode = info?.vehicleType === 'motorbike' ? 'l' : 'd'
+    Linking.openURL(`google.navigation:q=${lat},${lng}&mode=${mode}`).catch(() => {
+      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`)
+    })
+  }
+
   function handleCancel() {
     showAlert(t('cancel.title'), t('cancel.confirm'), [
       { text: t('cancel.no'), style: 'cancel' },
@@ -335,9 +349,16 @@ export default function TrackingScreen() {
           clearAllPolls()
           // Đánh dấu RTDB — tài xế đọc được nếu FCM không đến
           if (tripId) rtdb.set(`trips/${tripId}/cancelled_by_customer`, true).catch(() => {})
-          // Notify tài xế qua FCM
-          if (tripId && driverFcmTokenRef.current) {
-            notifyCancel(tripId, 'customer', driverFcmTokenRef.current).catch(() => {})
+          // Notify tài xế qua FCM — fallback fetch token nếu ref rỗng
+          if (tripId) {
+            let fcmToken = driverFcmTokenRef.current
+            if (!fcmToken) {
+              try {
+                const info = await rtdb.get<{ driverFcmToken?: string }>(`trips/${tripId}/trip_info`)
+                fcmToken = info?.driverFcmToken ?? ''
+              } catch {}
+            }
+            if (fcmToken) notifyCancel(tripId, 'customer', fcmToken).catch(() => {})
           }
 
           // Lưu dữ liệu chuyến để khôi phục ở bước chọn điểm đón
@@ -369,12 +390,26 @@ export default function TrackingScreen() {
     <View style={styles.container}>
       {/* Map full screen */}
       <View style={{ ...StyleSheet.absoluteFillObject }}>
-        <MapView ref={mapRef} lat={driverLat} lng={driverLng} />
+        <MapView
+          ref={mapRef}
+          lat={driverLat}
+          lng={driverLng}
+          onMapReady={() => {
+            if (bottomPadRef.current > 0)
+              mapRef.current?.setBottomPadding(bottomPadRef.current)
+          }}
+        />
       </View>
 
       {/* Bottom panel — swipe handle up to reveal SOS section */}
       <Animated.View
         style={[styles.panel, { transform: [{ translateY: panelAnim }], paddingBottom: Math.max(insets.bottom, 16) }]}
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height
+          if (h === panelHRef.current) return
+          panelHRef.current = h
+          bottomPadRef.current = panelLevelRef.current === 1 ? h : h - SOS_SECTION_H
+        }}
       >
         <View {...panResponder.panHandlers} style={styles.handleArea}>
           <View style={styles.handle} />
@@ -389,15 +424,18 @@ export default function TrackingScreen() {
             <View style={styles.driverInfo}>
               <Text style={styles.driverName} numberOfLines={1}>{driverInfo.name}</Text>
               <Text style={styles.driverMeta} numberOfLines={1}>
-                {[driverInfo.vehicleBrand, driverInfo.licensePlate, driverInfo.vehicleColor].filter(Boolean).join(' · ')}
+                {[driverInfo.vehicleBrand, driverInfo.licensePlate].filter(Boolean).join(' - ')}
               </Text>
+              {!!driverInfo.vehicleColor && (
+                <Text style={styles.driverMeta} numberOfLines={1}>Màu: {driverInfo.vehicleColor}</Text>
+              )}
             </View>
             <TouchableOpacity
               style={[styles.callChip, !driverPhone && styles.callChipDisabled]}
               onPress={() => driverPhone && Linking.openURL(`tel:${driverPhone}`)}
               activeOpacity={driverPhone ? 0.75 : 1}
             >
-              <Ionicons name="call-outline" size={13} color={driverPhone ? BRAND : '#94A3B8'} />
+              <Ionicons name="call-outline" size={13} color={driverPhone ? '#fff' : '#94A3B8'} />
               <Text style={[styles.callChipText, !driverPhone && styles.callChipTextDisabled]}>
                 {driverPhone ? `***${driverPhone.slice(-3)}` : '···'}
               </Text>
@@ -422,7 +460,15 @@ export default function TrackingScreen() {
           <Text style={styles.statusText}>{t(statusCfg.label)}</Text>
         </View>
 
-        {(tripStatus === 'picked_up' || (canCancel && tripStatus === 'going_to_pickup')) && (
+        {transportModel !== 'freight' && tripStatus !== 'completed' && (
+          <TouchableOpacity style={styles.mapsBtn} onPress={handleOpenMaps} activeOpacity={0.8}>
+            <Ionicons name="map-outline" size={16} color={BRAND} />
+            <Text style={styles.mapsBtnText}>
+              {tripStatus === 'going_to_pickup' ? 'Dẫn đường đến điểm đón' : 'Dẫn đường đến điểm đến'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        {tripStatus !== 'completed' && (
           <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel} activeOpacity={0.75}>
             <Ionicons name="close-circle-outline" size={18} color="#DC2626" />
             <Text style={styles.cancelText}>{t('cancel.title')}</Text>
@@ -453,9 +499,9 @@ const styles = StyleSheet.create({
   sosDivider:  { height: 1, backgroundColor: '#E2E8F0', marginHorizontal: -20, marginTop: 8 },
   sosSection:  { alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
   driverRow:           { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 10 },
-  callChip:            { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0, backgroundColor: '#E8EDF6', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 20 },
-  callChipDisabled:    { backgroundColor: '#F1F5F9' },
-  callChipText:        { fontSize: 13, fontWeight: '600', color: BRAND },
+  callChip:            { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0, backgroundColor: BRAND, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 20 },
+  callChipDisabled:    { backgroundColor: '#CBD5E1' },
+  callChipText:        { fontSize: 12, fontWeight: '600', color: '#fff' },
   callChipTextDisabled:{ color: '#94A3B8' },
   avatar:     { width: 48, height: 48, borderRadius: 24, backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   avatarText: { color: '#fff', fontSize: 16, fontWeight: '700' },
@@ -466,6 +512,8 @@ const styles = StyleSheet.create({
   statusRow:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   statusDot:  { width: 8, height: 8, borderRadius: 4, marginRight: 6, backgroundColor: BRAND },
   statusText: { fontSize: 14, fontWeight: '600', color: BRAND },
-  cancelBtn:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: '#DC2626', borderRadius: 12, paddingVertical: 12, marginBottom: 4 },
-  cancelText: { color: '#DC2626', fontWeight: '600', fontSize: 15 },
+  mapsBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: BRAND, borderRadius: 12, paddingVertical: 11, marginBottom: 8 },
+  mapsBtnText: { color: BRAND, fontWeight: '600', fontSize: 14 },
+  cancelBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: '#DC2626', borderRadius: 12, paddingVertical: 12, marginBottom: 4 },
+  cancelText:  { color: '#DC2626', fontWeight: '600', fontSize: 15 },
 })

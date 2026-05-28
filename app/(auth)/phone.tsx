@@ -143,6 +143,7 @@ export default function PhoneAuthScreen() {
           firstTripDone:  doc.firstTripDone,
           referralCount:  doc.referralCount,
           termsVersion:   doc.termsVersion,
+          fcmToken:       doc.fcmToken,
         }
         await SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(info))
         await SecureStore.setItemAsync(SecureStoreKey.DRIVER_ENCRYPTED_KEY, doc.encryptedPrivateKey)

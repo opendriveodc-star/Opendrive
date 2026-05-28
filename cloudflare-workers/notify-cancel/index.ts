@@ -114,7 +114,6 @@ export default {
             data:         dataPayload,
             android: {
               priority: 'high',
-              notification: { channel_id: 'trip_alerts' },
             },
           },
         }),

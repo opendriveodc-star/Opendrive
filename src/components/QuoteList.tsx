@@ -40,8 +40,11 @@ function QuoteItem({ quote, onSelect, onPreview }: {
             <Text style={styles.meta}> {quote.rating.toFixed(1)} · {quote.ratingCount} {t('trip.trips')}</Text>
           </View>
           <Text style={styles.meta} numberOfLines={1}>
-            {[quote.vehicleBrand, quote.licensePlate, quote.vehicleColor].filter(Boolean).join(' · ')}
+            {[quote.vehicleBrand, quote.licensePlate].filter(Boolean).join(' - ')}
           </Text>
+          {!!quote.vehicleColor && (
+            <Text style={styles.meta} numberOfLines={1}>Màu: {quote.vehicleColor}</Text>
+          )}
         </View>
 
         {/* Price + Chọn */}
@@ -79,7 +82,7 @@ export default function QuoteList({ quotes, onSelect, onPreview }: QuoteListProp
 }
 
 const styles = StyleSheet.create({
-  list: { paddingVertical: 6, paddingHorizontal: 12 },
+  list: { paddingVertical: 6, paddingHorizontal: 2 },
 
   card: {
     backgroundColor: '#fff',
@@ -103,7 +106,7 @@ const styles = StyleSheet.create({
   info:       { flex: 1, gap: 2 },
   driverName: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
   metaRow:    { flexDirection: 'row', alignItems: 'center' },
-  meta:       { fontSize: 12, color: '#64748B' },
+  meta:       { fontSize: 13, color: '#64748B' },
 
   rightCol:   { alignItems: 'center', gap: 6, flexShrink: 0 },
   price:      { fontSize: 20, fontWeight: '800', color: BRAND, textAlign: 'center' },

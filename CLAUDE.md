@@ -6,7 +6,7 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-27 (session 39 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-29 (session 41 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
@@ -262,11 +262,38 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **`app/(driver)/trip.tsx`:** tài xế freight thấy trang vuốt ngang page 2 với thông tin người giao/nhận + nút gọi điện
   - **Polish:** xóa `autoFocus` khỏi DestPanel (bàn phím không tự bật khi chuyển bước); swipe hint đổi "Vuốt sang" → "Vuốt qua phải"
 
-### Bàn giao Session 40 – Bắt đầu từ đây
+- **Session 40:** Driver freight panel + map centering + customer tracking UX ✅
+  - **Fix stale SecureStore** (`app/(driver)/online.tsx`): `handleTripSelected` dùng `getDriverInfo()` đọc dữ liệu mới nhất từ SecureStore trước khi ghi `status:'busy'` — fix bug `transportModel` bị reset về `'passenger'` do `driverInfoRef.current` load từ lúc khởi động app
+  - **`app/(driver)/trip.tsx`** — freight info panel redesign:
+    - `freightInfo` fetch không điều kiện khi load (không check `transportModel`) — dùng `!!freightInfo` để phân nhánh layout
+    - 4 thẻ riêng: **[giá báo + nút gọi khách]** / **[Thông tin người gửi: tên + call chip + địa chỉ đón]** / **[Thông tin người nhận: tên + call chip + địa chỉ đến]** / **[Ghi chú vàng nhạt]**
+    - `ScrollView flex:1` cho info section, `minHeight: SCREEN_H * 0.82` cho panel — nút action luôn visible, scroll được trên màn nhỏ
+    - Layout hành khách (else branch) giữ nguyên
+  - **`app/(driver)/trip.tsx`** — driver dot luôn canh giữa vùng map trống phía trên panel:
+    - `PANEL_H = Math.round(SCREEN_H * 0.82)` — chiều cao panel
+    - `bottomPadRef` lưu bottom padding hiện tại (init = `PANEL_H - SOS_SECTION_H`)
+    - `onMapReady`: gọi `setBottomPadding(bottomPadRef.current)` sau `fitBoundsToMarkers`
+    - Interval `panTo`: truyền `bottomPadRef.current` làm `bottomPad`
+    - `onPanResponderRelease` spring callback: cập nhật `bottomPadRef` + `setBottomPadding` sau animation xong (collapsed → `PANEL_H - SOS_SECTION_H`, expanded → `PANEL_H`)
+  - **`app/(driver)/trip.tsx`** — proximity check interval: **5s → 15s** (cả pickup lẫn dropoff)
+  - **`app/(customer)/tracking.tsx`** — UX fixes:
+    - Separator thông tin xe: `·` → `-` (`Honda - 51G-12345 - Trắng`)
+    - Bỏ grace period 10 phút — cho phép hủy chuyến mọi lúc (trừ khi `completed`); xóa `canCancel` state + `startedAtRef` + grace period `useEffect`
+    - Thêm nút **"Dẫn đường Google Maps"** cho hành khách (ẩn với freight): khi `going_to_pickup` → navigate đến điểm đón, khi `picked_up` → navigate đến điểm đến; mode `l` (xe máy) hoặc `d` (ô tô) từ `vehicleType`; fallback web URL nếu không có Google Maps
 
-**Tình trạng:** Freight UX hoàn chỉnh. Security hardening session 38 OK. Chưa set secrets Worker 11, chưa build APK.
+- **Session 41:** Bug fix FCM hủy chuyến + UI polish BookPanel ✅
+  - **Root cause FCM:** `phone.tsx` load Firestore nhưng **không copy `fcmToken`** vào `DriverInfo` khi lưu SecureStore → mỗi lần đăng nhập lại `driverInfo.fcmToken = undefined` → `trip_info.driverFcmToken = ''` → khách hủy chuyến tài xế không nhận được FCM
+  - **Fix `phone.tsx`:** thêm `fcmToken: doc.fcmToken` vào object `DriverInfo` khi lưu SecureStore lúc đăng nhập
+  - **Fix `trip.tsx`:** đảo thứ tự lấy token — `getDevicePushTokenAsync()` trước (luôn tươi từ OS), fallback SecureStore
+  - **Worker notify-cancel:** xóa `channel_id: 'trip_alerts'` (channel không tồn tại, Android drop notification im lặng)
+  - **BookPanel UI** (`home.tsx`): xóa `borderWidth`/`borderColor` khỏi `freightInfoCard`, `freightDistCard`, `freightNoteCard` — cả passenger lẫn freight
+
+### Bàn giao Session 42 – Bắt đầu từ đây
+
+**Tình trạng:** FCM hủy chuyến đã fix. Worker notify-cancel cần redeploy. BookPanel không còn viền.
 
 **Việc cần làm ngay:**
+- [ ] Redeploy Worker notify-cancel: `cd cloudflare-workers/notify-cancel && npx wrangler deploy`
 - [ ] Set secrets Worker 11: `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` + `FIREBASE_PROJECT_ID` trong `cloudflare-workers/cleanup-auth-log/`
 
 ### Việc cần làm tiếp theo
