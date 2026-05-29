@@ -6,7 +6,7 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-29 (session 41 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-29 (session 42 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
@@ -287,12 +287,20 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **Fix `trip.tsx`:** đảo thứ tự lấy token — `getDevicePushTokenAsync()` trước (luôn tươi từ OS), fallback SecureStore
   - **BookPanel UI** (`home.tsx`): xóa `borderWidth`/`borderColor` khỏi `freightInfoCard`, `freightDistCard`, `freightNoteCard` — cả passenger lẫn freight
 
-### Bàn giao Session 42 – Bắt đầu từ đây
+- **Session 42:** FCM giao hàng freight + redeploy Worker notify-cancel ✅
+  - **Vấn đề:** freight không có proximity trigger rating (khách không đi cùng tài xế) → rating screen không bao giờ hiện
+  - **Giải pháp:** tài xế hoàn thành giao hàng → gửi FCM `delivery_complete` cho khách → khách nhận FCM (foreground hoặc tap notification) → `navigateToRating()`
+  - **Worker `notify-cancel`:** thêm case `reason: 'delivery_complete'` — title "Giao hàng thành công", body mời đánh giá, `data.type = 'delivery_complete'`; deployed ✅
+  - **`cloudflare.ts`:** mở rộng type `reason` của `notifyCancel` thêm `'delivery_complete'`
+  - **`trip.tsx` (tài xế):** `handleEndTrip()` phân nhánh freight/passenger; `handleEndFreightTrip()` gửi FCM rồi submit blockchain ngay với rating mặc định 5 (không chờ poll)
+  - **`tracking.tsx` (khách):** FCM listener gộp — xử lý cả `trip_cancelled/driver` lẫn `delivery_complete`; thêm `addNotificationResponseReceivedListener` cho trường hợp khách tap notification khi app background
+  - **i18n** vi/en: thêm `trip.freightCompleteConfirm`, `trip.processingDelivery`
 
-**Tình trạng:** FCM hủy chuyến đã fix. Worker notify-cancel cần redeploy. BookPanel không còn viền.
+### Bàn giao Session 43 – Bắt đầu từ đây
+
+**Tình trạng:** Freight rating flow hoàn chỉnh. Worker notify-cancel đã redeploy.
 
 **Việc cần làm ngay:**
-- [ ] Redeploy Worker notify-cancel: `cd cloudflare-workers/notify-cancel && npx wrangler deploy`
 - [ ] Set secrets Worker 11: `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` + `FIREBASE_PROJECT_ID` trong `cloudflare-workers/cleanup-auth-log/`
 
 ### Việc cần làm tiếp theo

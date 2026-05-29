@@ -58,6 +58,7 @@ export default function TripScreen() {
   const [sosSent,          setSosSent]          = useState(false)
   const [abandoning,       setAbandoning]       = useState(false)
   const [freightInfo,      setFreightInfo]      = useState<FreightInfo | null>(null)
+  const [waitingText,      setWaitingText]      = useState('')
 
   const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const ratingPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -209,12 +210,7 @@ export default function TripScreen() {
   useEffect(() => {
     if (!pendingTrip || !driverInfo) return
     const write = async () => {
-      let fcmToken = ''
-      try {
-        const td = await Notifications.getDevicePushTokenAsync()
-        fcmToken = td.data as string
-      } catch {}
-      if (!fcmToken) fcmToken = driverInfo.fcmToken ?? ''
+      const fcmToken = driverInfo.fcmToken ?? ''
       rtdb.set(`trips/${pendingTrip.tripId}/trip_info`, {
         driverName:     driverInfo.name,
         driverPhone:    driverInfo.phone,
@@ -446,18 +442,39 @@ export default function TripScreen() {
   }
 
   function handleEndTrip() {
-    showAlert(t('trip.completed'), t('trip.waitForRating'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('common.confirm'),
-        onPress: () => {
-          if (!pendingTrip) return
-          rtdb.set(`trips/${pendingTrip.tripId}/trip_status`, 'completed').catch(() => {})
-          setWaitingForRating(true)
-          startRatingPoll()
+    const isFreight = !!freightInfo
+    showAlert(
+      t('trip.completed'),
+      isFreight ? t('trip.freightCompleteConfirm') : t('trip.waitForRating'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.confirm'),
+          onPress: () => {
+            if (!pendingTrip) return
+            if (isFreight) {
+              handleEndFreightTrip()
+            } else {
+              rtdb.set(`trips/${pendingTrip.tripId}/trip_status`, 'completed').catch(() => {})
+              setWaitingForRating(true)
+              startRatingPoll()
+            }
+          },
         },
-      },
-    ])
+      ],
+    )
+  }
+
+  async function handleEndFreightTrip() {
+    if (!pendingTrip) return
+    // Gửi FCM thông báo giao hàng thành công cho khách
+    if (customerFcmTokenRef.current) {
+      notifyCancel(pendingTrip.tripId, 'delivery_complete', customerFcmTokenRef.current).catch(() => {})
+    }
+    // Hiện spinner + submit blockchain ngay với rating mặc định 5
+    setWaitingText(t('trip.processingDelivery'))
+    setWaitingForRating(true)
+    await submitTrip(5 as RatingValue)
   }
 
   function startRatingPoll() {
@@ -529,7 +546,7 @@ export default function TripScreen() {
     return (
       <View style={styles.fullCenter}>
         <ActivityIndicator size="large" color={BRAND} />
-        <Text style={styles.waitText}>{t('trip.waitForRating')}</Text>
+        <Text style={styles.waitText}>{waitingText || t('trip.waitForRating')}</Text>
       </View>
     )
   }

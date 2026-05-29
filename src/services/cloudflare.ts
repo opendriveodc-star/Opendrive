@@ -107,10 +107,10 @@ export async function miningReport(uid: string, rounds: number): Promise<MiningR
   return res.data
 }
 
-// Worker 10: Gửi FCM thông báo hủy chuyến
+// Worker 10: Gửi FCM thông báo hủy chuyến hoặc giao hàng thành công
 export async function notifyCancel(
   tripId:        string,
-  reason:        'driver' | 'customer',
+  reason:        'driver' | 'customer' | 'delivery_complete',
   targetFcmToken: string,
   cancellerName?: string,
 ): Promise<void> {

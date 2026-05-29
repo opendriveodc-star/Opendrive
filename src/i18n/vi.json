@@ -235,6 +235,8 @@
     "abandonTrip":           "Hủy chuyến",
     "abandonConfirm":        "Bỏ chuyến này và quay về trang chủ?",
     "waitForRating":         "Đang chờ khách đánh giá...",
+    "freightCompleteConfirm":"Xác nhận đã giao hàng đến địa chỉ nhận?",
+    "processingDelivery":    "Đang xử lý giao hàng...",
     "firstTripTitle":        "Chúc mừng chuyến đầu tiên!",
     "firstTripBonus":        "Bạn vừa hoàn thành chuyến xe đầu tiên trên OpenDrive.\n\nHệ thống đã tặng bạn 10 ODC như một lời chào mừng.\nHãy tiếp tục cống hiến — cộng đồng cần bạn!",
     "trips":                 "chuyến",

@@ -82,23 +82,30 @@ export default {
 
     const { tripId, reason, targetFcmToken, cancellerName } = body
     if (!tripId || !reason || !targetFcmToken) return json({ success: false, error: 'Missing fields' }, 400)
-    if (reason !== 'driver' && reason !== 'customer') return json({ success: false, error: 'Invalid reason' }, 400)
+    if (reason !== 'driver' && reason !== 'customer' && reason !== 'delivery_complete')
+      return json({ success: false, error: 'Invalid reason' }, 400)
 
     try {
       const accessToken = await getFirebaseAccessToken(env.FIREBASE_SERVICE_ACCOUNT)
       const projectId   = env.FIREBASE_PROJECT_ID
 
-      const title    = reason === 'driver' ? 'Tài xế đã hủy chuyến' : 'Khách đã hủy chuyến'
-      const bodyText = reason === 'driver'
-        ? (cancellerName ? `${cancellerName} đã hủy chuyến của bạn` : 'Tài xế đã hủy chuyến của bạn')
-        : 'Hành khách đã hủy chuyến của bạn'
+      let title: string
+      let bodyText: string
+      const dataPayload: Record<string, string> = { tripId }
 
-      const dataPayload: Record<string, string> = {
-        type:   'trip_cancelled',
-        reason,
-        tripId,
+      if (reason === 'delivery_complete') {
+        title    = 'Giao hàng thành công'
+        bodyText = 'Tài xế đã giao hàng đến điểm đến. Hãy đánh giá trải nghiệm của bạn!'
+        dataPayload.type = 'delivery_complete'
+      } else {
+        title    = reason === 'driver' ? 'Tài xế đã hủy chuyến' : 'Khách đã hủy chuyến'
+        bodyText = reason === 'driver'
+          ? (cancellerName ? `${cancellerName} đã hủy chuyến của bạn` : 'Tài xế đã hủy chuyến của bạn')
+          : 'Hành khách đã hủy chuyến của bạn'
+        dataPayload.type   = 'trip_cancelled'
+        dataPayload.reason = reason
+        if (cancellerName) dataPayload.cancellerName = cancellerName
       }
-      if (cancellerName) dataPayload.cancellerName = cancellerName
 
       const fcmUrl = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`
       const fcmRes = await fetch(fcmUrl, {
@@ -112,10 +119,7 @@ export default {
             token:        targetFcmToken,
             notification: { title, body: bodyText },
             data:         dataPayload,
-            android: {
-              priority: 'high',
-              notification: { channel_id: 'trip_alerts' },
-            },
+            android: { priority: 'high' },
           },
         }),
       })

@@ -196,15 +196,22 @@ export default function TrackingScreen() {
     return () => clearAllPolls()
   }, [tripId])
 
-  // FCM foreground listener: nhận thông báo tài xế hủy ngay lập tức
+  // FCM listeners: foreground + background tap
   useEffect(() => {
     if (!tripId) return
-    const sub = Notifications.addNotificationReceivedListener(notification => {
+    const subFg = Notifications.addNotificationReceivedListener(notification => {
       const data = notification.request.content.data as Record<string, string>
-      if (data?.type !== 'trip_cancelled' || data?.reason !== 'driver') return
-      handleDriverCancelledAlert(data?.cancellerName)
+      if (data?.type === 'trip_cancelled' && data?.reason === 'driver') {
+        handleDriverCancelledAlert(data?.cancellerName)
+      } else if (data?.type === 'delivery_complete') {
+        navigateToRating()
+      }
     })
-    return () => sub.remove()
+    const subBg = Notifications.addNotificationResponseReceivedListener(response => {
+      const data = response.notification.request.content.data as Record<string, string>
+      if (data?.type === 'delivery_complete') navigateToRating()
+    })
+    return () => { subFg.remove(); subBg.remove() }
   }, [tripId])
 
   function clearAllPolls() {
