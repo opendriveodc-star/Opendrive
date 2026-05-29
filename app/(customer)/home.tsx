@@ -128,7 +128,13 @@ export default function CustomerHomeScreen() {
   useEffect(() => { topBarHRef.current = topBarH }, [topBarH])
   useEffect(() => { stepRef.current = step }, [step])
   useEffect(() => { quotesRef.current = quotes }, [quotes])
-  useEffect(() => { loadSavedLocs(); checkLockAndRetry() }, [])
+  useEffect(() => {
+    loadSavedLocs()
+    checkLockAndRetry()
+    Notifications.getDevicePushTokenAsync()
+      .then(td => { if (td.data) SecureStore.setItemAsync(SecureStoreKey.CUSTOMER_FCM_TOKEN, td.data as string) })
+      .catch(() => {})
+  }, [])
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   // Quote polling when entering step 4
@@ -532,6 +538,9 @@ export default function CustomerHomeScreen() {
         const tokenData = await Notifications.getDevicePushTokenAsync()
         customerFcmToken = tokenData.data as string
       } catch {}
+      if (!customerFcmToken) {
+        customerFcmToken = (await SecureStore.getItemAsync(SecureStoreKey.CUSTOMER_FCM_TOKEN)) ?? ''
+      }
 
       const tripId = nanoid()
       await rtdb.set(`trips/${tripId}/info`, {
@@ -609,6 +618,7 @@ export default function CustomerHomeScreen() {
           vehicleBrand:   quote.vehicleBrand,
           vehicleColor:   quote.vehicleColor,
           licensePlate:   quote.licensePlate,
+          tripPrice:      String(quote.quotedPrice),
           transportModel: transportModel,
           senderName:     senderName,
           senderPhone:    senderPhone,
@@ -1556,7 +1566,7 @@ const sub = StyleSheet.create({
 
   // Freight step 3 – cards
   freightInfoCard: {
-    backgroundColor: '#EEF4FF',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -1570,7 +1580,7 @@ const sub = StyleSheet.create({
   freightInfoAddress: { flex: 1, fontSize: 13, color: '#475569', lineHeight: 19 },
   freightDistCard: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     paddingHorizontal: 12, paddingVertical: 8, marginBottom: 8,
   },

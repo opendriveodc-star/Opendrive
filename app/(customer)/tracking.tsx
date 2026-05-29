@@ -37,9 +37,10 @@ export default function TrackingScreen() {
   const { t }      = useTranslation()
   const insets     = useSafeAreaInsets()
   const { tripId, driverName, vehicleBrand, vehicleColor, licensePlate, transportModel,
-          senderName, senderPhone, recipientName, recipientPhone } = useLocalSearchParams<{
+          tripPrice, senderName, senderPhone, recipientName, recipientPhone } = useLocalSearchParams<{
     tripId: string; driverName: string; vehicleBrand: string; vehicleColor: string; licensePlate: string
-    transportModel: string; senderName: string; senderPhone: string; recipientName: string; recipientPhone: string
+    transportModel: string; tripPrice: string
+    senderName: string; senderPhone: string; recipientName: string; recipientPhone: string
   }>()
 
   // Khởi tạo ngay từ params — không cần chờ poll trip_info
@@ -56,6 +57,7 @@ export default function TrackingScreen() {
 
   const driverPhoneRef   = useRef<string>('')
   const customerPhoneRef = useRef<string>('')
+  const pickedUpAtRef    = useRef<number>(0)
 
   const mapRef             = useRef<MapViewHandle>(null)
   const completedRef       = useRef(false)
@@ -147,6 +149,7 @@ export default function TrackingScreen() {
         if (status === 'picked_up') {
           setTripStatus('picked_up')
           driverArrivedRef.current = true  // đảm bảo set dù arrivedPollRef chưa kịp fire
+          if (!pickedUpAtRef.current) pickedUpAtRef.current = Date.now()
           // Dừng tất cả poll — khách tự bấm hủy nếu cần, proximity trigger lo rating
           if (locationPollRef.current) { clearInterval(locationPollRef.current); locationPollRef.current = null }
           if (statusPollRef.current)   { clearInterval(statusPollRef.current);   statusPollRef.current   = null }
@@ -281,6 +284,8 @@ export default function TrackingScreen() {
         driverName:    driverInfoRef.current?.name ?? '',
         vehicleBrand:  driverInfoRef.current?.vehicleBrand ?? '',
         licensePlate:  driverInfoRef.current?.licensePlate ?? '',
+        tripPrice:     tripPrice ?? '0',
+        pickedUpAt:    String(pickedUpAtRef.current),
       },
     })
   }

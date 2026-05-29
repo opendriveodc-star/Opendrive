@@ -1,7 +1,10 @@
 // app/(customer)/rating.tsx
 
-import React, { useState } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
+import React, { useEffect, useRef, useState } from 'react'
+import {
+  View, Text, TouchableOpacity, StyleSheet,
+  ScrollView, Animated,
+} from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useLocalSearchParams, router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
@@ -10,22 +13,44 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { rtdb } from '../../src/services/firebase'
 import type { RatingValue } from '../../src/types'
 
-const BRAND      = '#1A2E5E'
-const STAR_HINTS = ['Rất tệ', 'Chưa hài lòng', 'Bình thường', 'Tốt lắm!', 'Tuyệt vời!']
-const STAR_VALUES: RatingValue[] = [1, 2, 3, 4, 5]
+const BRAND       = '#1A2E5E'
+const GREEN       = '#16A34A'
+const GREEN_LIGHT = '#F0FDF4'
 const HISTORY_KEY = 'customer_trip_history'
+
+const STAR_HINTS: Record<number, string> = {
+  1: 'Rất tệ',
+  2: 'Chưa hài lòng',
+  3: 'Bình thường',
+  4: 'Tốt lắm!',
+  5: 'Tuyệt vời! ✨',
+}
 
 export default function RatingScreen() {
   const { t } = useTranslation()
   const {
-    tripId, pickupAddress, destAddress, estimatedKm,
-    vehicleType, driverName, vehicleBrand, licensePlate,
+    tripId, pickupAddress, destAddress,
+    driverName, vehicleBrand, licensePlate,
+    tripPrice, pickedUpAt,
   } = useLocalSearchParams<{
     tripId: string; pickupAddress?: string; destAddress?: string
-    estimatedKm?: string; vehicleType?: string
     driverName?: string; vehicleBrand?: string; licensePlate?: string
+    tripPrice?: string; pickedUpAt?: string
   }>()
+
   const [selected, setSelected] = useState<RatingValue | null>(null)
+  const pulse = useRef(new Animated.Value(1)).current
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.12, duration: 1100, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1,    duration: 1100, useNativeDriver: true }),
+      ])
+    )
+    anim.start()
+    return () => anim.stop()
+  }, [])
 
   async function saveHistory(rating: number | null) {
     const entry = {
@@ -35,10 +60,9 @@ export default function RatingScreen() {
       driverName:    driverName ?? '',
       vehicleBrand:  vehicleBrand ?? '',
       licensePlate:  licensePlate ?? '',
-      estimatedKm:   parseFloat(estimatedKm ?? '0'),
-      vehicleType:   vehicleType ?? '',
+      tripPrice:     parseInt(tripPrice ?? '0'),
       rating,
-      completedAt:   Date.now(),
+      completedAt: Date.now(),
     }
     try {
       const raw  = await AsyncStorage.getItem(HISTORY_KEY)
@@ -60,74 +84,168 @@ export default function RatingScreen() {
     router.replace('/(customer)/home')
   }
 
+  const tripIdShort = (tripId ?? '').slice(0, 8).toUpperCase()
+  const price = parseInt(tripPrice ?? '0')
+  const priceFormatted = price > 0 ? price.toLocaleString('vi-VN') + ' đ' : ''
+
+  const pickedUpTs  = parseInt(pickedUpAt ?? '0')
+  const durationMin = pickedUpTs > 0 ? Math.floor((Date.now() - pickedUpTs) / 60000) : 0
+  const durationText = durationMin > 0 ? `${durationMin} phút` : ''
+
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <View style={styles.center}>
-        <View style={styles.iconWrap}>
-          <Ionicons name="checkmark-circle" size={64} color={BRAND} />
+    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <ScrollView contentContainerStyle={s.root} showsVerticalScrollIndicator={false}>
+
+        {/* Icon section */}
+        <View style={s.iconSection}>
+          <Animated.View style={[s.glow, { transform: [{ scale: pulse }] }]} />
+          <View style={s.iconCircle}>
+            <Ionicons name="checkmark" size={42} color="#fff" />
+          </View>
         </View>
 
-        <Text style={styles.title}>{t('trip.completed')}</Text>
-        <Text style={styles.subtitle}>{t('trip.rateDriver')}</Text>
+        <Text style={s.title}>Chuyến hoàn thành!</Text>
+        <Text style={s.subtitle}>{t('trip.rateDriver')}</Text>
 
-        <View style={styles.starsRow}>
-          {STAR_VALUES.map((v) => {
-            const filled = selected !== null && v <= selected
-            return (
-              <TouchableOpacity key={v} onPress={() => setSelected(v)} activeOpacity={0.7} style={styles.starBtn}>
-                <Ionicons
-                  name={filled ? 'star' : 'star-outline'}
-                  size={48}
-                  color={filled ? '#F59E0B' : '#CBD5E1'}
-                />
-              </TouchableOpacity>
-            )
-          })}
+        {/* Trip info card */}
+        <View style={s.card}>
+          <Text style={s.cardHeader}>CHI TIẾT CHUYẾN ĐI</Text>
+
+          <CardRow icon="pricetag-outline"  label="Mã chuyến"  value={`#${tripIdShort}`} />
+          {!!durationText && (
+            <>
+              <View style={s.divRow} />
+              <CardRow icon="time-outline"      label="Thời gian"  value={durationText} />
+            </>
+          )}
+          {!!pickupAddress && (
+            <>
+              <View style={s.divRow} />
+              <CardRow icon="location-outline"  label="Điểm đón"   value={pickupAddress} />
+            </>
+          )}
+          {!!destAddress && (
+            <>
+              <View style={s.divRow} />
+              <CardRow icon="flag-outline"      label="Điểm đến"   value={destAddress} />
+            </>
+          )}
+          {!!priceFormatted && (
+            <>
+              <View style={s.divRow} />
+              <CardRow icon="cash-outline"      label="Giá tiền"   value={priceFormatted} highlight />
+            </>
+          )}
         </View>
 
-        <Text style={styles.hintText}>
-          {selected ? STAR_HINTS[selected - 1] : t('trip.ratePlaceholder')}
+        {/* Rating */}
+        <Text style={s.ratingLabel}>{t('trip.rateDriver')}</Text>
+        <View style={s.starsRow}>
+          {([1, 2, 3, 4, 5] as RatingValue[]).map(v => (
+            <TouchableOpacity key={v} onPress={() => setSelected(v)} activeOpacity={0.7} style={s.starBtn}>
+              <Ionicons
+                name={selected !== null && v <= selected ? 'star' : 'star-outline'}
+                size={46}
+                color={selected !== null && v <= selected ? '#F59E0B' : '#CBD5E1'}
+              />
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={s.hintText}>
+          {selected ? STAR_HINTS[selected] : t('trip.ratePlaceholder')}
         </Text>
-      </View>
 
-      <View style={styles.footer}>
+      </ScrollView>
+
+      {/* Footer */}
+      <View style={s.footer}>
         <TouchableOpacity
-          style={[styles.submitBtn, !selected && styles.submitBtnDisabled]}
+          style={[s.submitBtn, !selected && s.submitBtnDisabled]}
           onPress={handleSubmit}
           disabled={!selected}
           activeOpacity={0.85}
         >
-          <Text style={styles.submitText}>{t('common.confirm')}</Text>
+          <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
+          <Text style={s.submitText}>{t('common.confirm')}</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.skipBtn}
-          onPress={handleSkip}
-        >
-          <Text style={styles.skipText}>{t('common.skip')}</Text>
+        <TouchableOpacity style={s.skipBtn} onPress={handleSkip} activeOpacity={0.6}>
+          <Text style={s.skipText}>{t('common.skip')}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
   )
 }
 
-const styles = StyleSheet.create({
-  safe:   { flex: 1, backgroundColor: '#F8FAFC' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 12 },
+function CardRow({
+  icon, label, value, highlight,
+}: { icon: string; label: string; value: string; highlight?: boolean }) {
+  return (
+    <View style={s.cardRow}>
+      <View style={s.cardRowLeft}>
+        <Ionicons name={icon as any} size={13} color="rgba(255,255,255,0.5)" />
+        <Text style={s.cardRowLabel}>{label}</Text>
+      </View>
+      <Text style={[s.cardRowValue, highlight && s.cardRowHighlight]} numberOfLines={2}>
+        {value}
+      </Text>
+    </View>
+  )
+}
 
-  iconWrap: { marginBottom: 4 },
-  title:    { fontSize: 24, fontWeight: '800', color: '#0F172A', textAlign: 'center' },
-  subtitle: { fontSize: 15, color: '#64748B', textAlign: 'center' },
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#fff' },
+  root: { paddingHorizontal: 28, paddingTop: 36, paddingBottom: 16 },
 
-  starsRow: { flexDirection: 'row', gap: 4, marginTop: 8 },
-  starBtn:  { padding: 4 },
+  // Icon
+  iconSection: { alignSelf: 'center', marginBottom: 24 },
+  glow: {
+    position: 'absolute', alignSelf: 'center',
+    width: 116, height: 116, borderRadius: 58,
+    backgroundColor: GREEN_LIGHT,
+    top: -14, left: -14,
+  },
+  iconCircle: {
+    width: 88, height: 88, borderRadius: 44,
+    backgroundColor: GREEN,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: GREEN,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.28, shadowRadius: 16, elevation: 10,
+  },
 
-  hintText: { fontSize: 16, fontWeight: '600', color: BRAND, minHeight: 24 },
+  title:    { fontSize: 22, fontWeight: '800', color: BRAND, textAlign: 'center', marginBottom: 4 },
+  subtitle: { fontSize: 13, color: '#94A3B8', textAlign: 'center', marginBottom: 24 },
 
-  footer:            { padding: 24, paddingBottom: 28, gap: 10 },
-  submitBtn:         { height: 56, backgroundColor: BRAND, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+  // Card
+  card: {
+    backgroundColor: BRAND, borderRadius: 22,
+    paddingVertical: 20, paddingHorizontal: 18,
+    marginBottom: 28,
+    shadowColor: BRAND, shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22, shadowRadius: 20, elevation: 8,
+  },
+  cardHeader: {
+    fontSize: 10, color: 'rgba(255,255,255,0.5)',
+    fontWeight: '700', letterSpacing: 1.5, marginBottom: 16,
+  },
+  divRow:       { height: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 10 },
+  cardRow:      { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
+  cardRowLeft:  { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 0.42 },
+  cardRowLabel: { fontSize: 12, color: 'rgba(255,255,255,0.5)', fontWeight: '600' },
+  cardRowValue: { fontSize: 13, color: '#fff', fontWeight: '600', flex: 0.58, textAlign: 'right' },
+  cardRowHighlight: { fontSize: 16, fontWeight: '800', color: '#FCD34D' },
+
+  // Rating
+  ratingLabel: { fontSize: 14, fontWeight: '700', color: BRAND, textAlign: 'center', marginBottom: 12 },
+  starsRow:    { flexDirection: 'row', justifyContent: 'center', gap: 6, marginBottom: 10 },
+  starBtn:     { padding: 2 },
+  hintText:    { fontSize: 16, fontWeight: '600', color: BRAND, textAlign: 'center', minHeight: 24, marginBottom: 8 },
+
+  // Footer
+  footer:            { paddingHorizontal: 28, paddingBottom: 24, gap: 10 },
+  submitBtn:         { height: 56, backgroundColor: BRAND, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   submitBtnDisabled: { opacity: 0.35 },
-  submitText:        { color: '#fff', fontSize: 17, fontWeight: '700' },
+  submitText:        { color: '#fff', fontSize: 16, fontWeight: '700' },
   skipBtn:           { alignItems: 'center', paddingVertical: 8 },
-  skipText:          { fontSize: 15, color: '#94A3B8' },
+  skipText:          { fontSize: 14, color: '#94A3B8' },
 })
