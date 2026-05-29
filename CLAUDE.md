@@ -6,7 +6,7 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-29 (session 42 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-30 (session 43 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
@@ -296,9 +296,36 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **`tracking.tsx` (khách):** FCM listener gộp — xử lý cả `trip_cancelled/driver` lẫn `delivery_complete`; thêm `addNotificationResponseReceivedListener` cho trường hợp khách tap notification khi app background
   - **i18n** vi/en: thêm `trip.freightCompleteConfirm`, `trip.processingDelivery`
 
-### Bàn giao Session 43 – Bắt đầu từ đây
+- **Session 43:** Refactor toàn bộ flow hủy chuyến + hoàn thành chuyến + FCM rating ✅
+  - **Flow hủy chuyến (`handleAbandon`) viết lại:**
+    - Bỏ `cancelling?` flag khỏi `PendingTrip`
+    - Thay `pendingPenalties[]` array → `penaltyTrip` object đơn (`getPenaltyTrip/savePenaltyTrip/clearPenaltyTrip`)
+    - `saveDriverInfo({ status:'ready' })` SecureStore **trước tiên** (crash recovery: `pendingTrip+status=ready` → home, không phải pending-trip screen)
+    - ODC deduction **blocking** retry 3×8s, 3s between; fail → `savePenaltyTrip` → alert → home; success → online
+    - Firestore update fire-and-forget (home.tsx tự fix khi mở)
+  - **Flow hoàn thành chuyến (`doEndTrip`) viết lại — unified passenger + freight:**
+    - Xóa rating poll 30s + `startRatingPoll/stopRatingPoll/submitTrip/handleEndFreightTrip`
+    - `saveDriverInfo({ status:'ready' })` SecureStore **trước tiên**
+    - Đọc RTDB `rating` 1 lần → default 3 nếu null
+    - Lưu `rating` + `memo27Base64` vào `pendingTrip` (crash recovery)
+    - Freight: FCM `delivery_complete` giữ nguyên (fire-and-forget)
+    - Blockchain **blocking** retry 3×8s, 3s between; fail → giữ `pendingTrip` → alert → home; success → đánh dấu `completed:true` → clear → online
+    - `updateDriverStatus` + `setDriverPendingTrip` fire-and-forget (không blocking)
+  - **FCM `approaching_dropoff` tại 150m:**
+    - `trip.tsx` `proximityRef`: khi ≤150m đến điểm đến → gửi FCM `approaching_dropoff` cho khách (cả passenger lẫn freight)
+    - `tracking.tsx`: xóa proximity useEffect tự tính GPS; FCM listener handle cả `approaching_dropoff` lẫn `delivery_complete` → `navigateToRating()`
+    - Worker `notify-cancel`: thêm case `approaching_dropoff` ("Tài xế đã đến nơi") → deployed ✅
+  - **home.tsx Sẵn sàng blocking — kiểm tra theo thứ tự:**
+    1. `penaltyTrip` tồn tại → blocking retry ODC → fail → block; success → tiếp tục
+    2. `pendingTrip` tồn tại → re-submit blockchain (dùng `memo27Base64`+`rating` đã lưu) → fail → block; `completed=true` → chỉ xóa
+    3. `setDriverPendingTrip(false)` mỗi lần Sẵn sàng → fix stale Firestore nếu bước trước fail
+  - **`index.tsx`:** xóa `cancelling` check; `pendingTrip+status=busy` → pending-trip screen; `pendingTrip+status≠busy` → xóa artifact → home
+  - **`PendingTrip` type:** thêm `memo27Base64?` và `completed?`
+  - **i18n** vi/en: `waitForRating`/`processingDelivery` → `completedConfirm`/`processingTrip`
 
-**Tình trạng:** Freight rating flow hoàn chỉnh. Worker notify-cancel đã redeploy.
+### Bàn giao Session 44 – Bắt đầu từ đây
+
+**Tình trạng:** Flow hủy chuyến + hoàn thành chuyến đã refactor hoàn chỉnh. FCM rating unified.
 
 **Việc cần làm ngay:**
 - [ ] Set secrets Worker 11: `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` + `FIREBASE_PROJECT_ID` trong `cloudflare-workers/cleanup-auth-log/`

@@ -16,10 +16,10 @@ import { updateDriverStatus, updateDriverFcmToken, getDriver, setDriverPendingTr
 import { getCurrentLocation } from '../../src/services/location'
 import { getODCBalance } from '../../src/services/odc'
 import { rtdb } from '../../src/services/firebase'
-import { savePendingTrip, getPendingPenalties, savePendingPenalties, getEncryptedKey, getDriverInfo, saveDriverInfo } from '../../src/utils/storage'
+import { savePendingTrip, getPendingTrip, clearPendingTrip, getPenaltyTrip, clearPenaltyTrip, getEncryptedKey, getDriverInfo, saveDriverInfo } from '../../src/utils/storage'
 import { recordTrip } from '../../src/services/cloudflare'
 import NetworkAlert from '../../src/components/NetworkAlert'
-import { SecureStoreKey, DriverInfo, DriverStatus, PendingTrip } from '../../src/types'
+import { SecureStoreKey, DriverInfo, DriverStatus, PendingTrip, RatingValue } from '../../src/types'
 import type { TripRealtimeInfo, TripQuote } from '../../src/types'
 
 const BRAND       = '#1A2E5E'
@@ -136,7 +136,6 @@ export default function DriverHomeScreen() {
     }
 
     await Promise.allSettled([
-      processPendingPenalty(),
       warmupLocation(),
       new Promise(r => setTimeout(r, 1400)),  // tối thiểu 1.4s để animation hiển thị
     ])
@@ -157,17 +156,33 @@ export default function DriverHomeScreen() {
         ? existing
         : (await Notifications.requestPermissionsAsync()).status
       if (finalStatus !== 'granted') return
-      const tokenData = await Notifications.getDevicePushTokenAsync()
-      const fcmToken  = tokenData.data as string
-      if (!fcmToken) return
+
       const raw = await SecureStore.getItemAsync(SecureStoreKey.DRIVER_INFO)
       if (!raw) return
       const info: DriverInfo = JSON.parse(raw)
-      if (info.fcmToken !== fcmToken) {
-        await updateDriverFcmToken(info.uid, fcmToken)
-        const updated = { ...info, fcmToken }
-        await SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(updated))
-        if (!navigatingRef.current) setDriverInfo(updated)
+
+      let fcmToken = ''
+      try {
+        const tokenData = await Notifications.getDevicePushTokenAsync()
+        fcmToken = tokenData.data as string
+      } catch {}
+
+      if (fcmToken) {
+        // Bước 2: token tươi → update Firestore + SecureStore nếu khác
+        if (info.fcmToken !== fcmToken) {
+          await updateDriverFcmToken(info.uid, fcmToken)
+          const updated = { ...info, fcmToken }
+          await SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(updated))
+          if (!navigatingRef.current) setDriverInfo(updated)
+        }
+      } else if (!info.fcmToken) {
+        // Bước 3: fallback → SecureStore chưa có token, lấy từ Firestore
+        const doc = await getDriver(info.uid)
+        if (doc?.fcmToken) {
+          const updated = { ...info, fcmToken: doc.fcmToken }
+          await SecureStore.setItemAsync(SecureStoreKey.DRIVER_INFO, JSON.stringify(updated))
+          if (!navigatingRef.current) setDriverInfo(updated)
+        }
       }
     } catch {}
   }
@@ -212,38 +227,6 @@ export default function DriverHomeScreen() {
     }
   }
 
-  async function processPendingPenalty() {
-    try {
-      const list = await getPendingPenalties()
-      if (list.length === 0) return
-      const encryptedPrivateKey = await getEncryptedKey()
-      if (!encryptedPrivateKey) return
-
-      const remaining = [...list]
-      let successCount = 0
-      for (let i = remaining.length - 1; i >= 0; i--) {
-        const p = remaining[i]
-        try {
-          await recordTrip({
-            driverUid: p.driverUid,
-            rating: 1,
-            tripPrice: p.tripPrice,
-            memo27bytes: p.memo27Base64,
-            isCancelled: true,
-            encryptedPrivateKey,
-          })
-          remaining.splice(i, 1)
-          successCount++
-        } catch {}
-      }
-
-      await savePendingPenalties(remaining)
-      if (successCount > 0) {
-        showAlert('Thông báo', `Đã trừ ODC do ${successCount} lần hủy chuyến trước đó.`)
-      }
-    } catch {}
-  }
-
   async function loadDriverInfo() {
     const raw = await SecureStore.getItemAsync(SecureStoreKey.DRIVER_INFO)
     if (!raw) return
@@ -264,12 +247,120 @@ export default function DriverHomeScreen() {
     }
   }
 
-  function handleButtonPress() {
+  async function handleButtonPress() {
     if (isAnimatingRef.current || isInitializing || goingOnline || !driverInfo) return
+
+    // Kiểm tra penaltyTrip — phải xử lý trước khi cho Sẵn sàng
+    const penalty = await getPenaltyTrip()
+    if (penalty) {
+      isAnimatingRef.current = true
+      setGoingOnline(true)
+      startSpinner()
+
+      let odcSuccess = false
+      try {
+        const key = await getEncryptedKey()
+        if (key) {
+          for (let i = 0; i < 3; i++) {
+            try {
+              await Promise.race([
+                recordTrip({ driverUid: penalty.driverUid, rating: 1, tripPrice: penalty.tripPrice, memo27bytes: penalty.memo27Base64, isCancelled: true, encryptedPrivateKey: key }),
+                new Promise<never>((_, r) => setTimeout(() => r(new Error('timeout')), 8000)),
+              ])
+              odcSuccess = true
+              break
+            } catch {
+              if (i < 2) await new Promise<void>(r => setTimeout(r, 3000))
+            }
+          }
+        }
+      } catch {}
+
+      if (!odcSuccess) {
+        spinRef.current?.stop()
+        spinRef.current = null
+        setGoingOnline(false)
+        isAnimatingRef.current = false
+        showAlert('Không thể xử lý', 'Không thể trừ ODC phạt hủy chuyến. Vui lòng thử lại.')
+        return
+      }
+
+      await clearPenaltyTrip()
+      spinRef.current?.stop()
+      spinRef.current = null
+      setGoingOnline(false)
+      isAnimatingRef.current = false
+      showAlert('Thông báo', 'Đã trừ ODC do hủy chuyến trước đó.', [
+        { text: 'OK', onPress: () => goOnline() },
+      ])
+      return
+    }
+
+    // Kiểm tra pendingTrip — blockchain fail sau khi hoàn thành chuyến
+    const pending = await getPendingTrip()
+    if (pending) {
+      if (pending.completed) {
+        // Blockchain đã submit nhưng clearPendingTrip chưa chạy kịp — chỉ cần xóa
+        await clearPendingTrip().catch(() => {})
+      } else if (pending.memo27Base64 && pending.rating != null) {
+        // Cần re-submit blockchain
+        isAnimatingRef.current = true
+        setGoingOnline(true)
+        startSpinner()
+
+        let success = false
+        try {
+          const key = await getEncryptedKey()
+          if (key) {
+            for (let i = 0; i < 3; i++) {
+              try {
+                await Promise.race([
+                  recordTrip({ driverUid: pending.driverUid, rating: pending.rating as RatingValue, tripPrice: pending.tripPrice, memo27bytes: pending.memo27Base64!, isCancelled: false, encryptedPrivateKey: key }),
+                  new Promise<never>((_, r) => setTimeout(() => r(new Error('timeout')), 8000)),
+                ])
+                success = true
+                break
+              } catch {
+                if (i < 2) await new Promise<void>(r => setTimeout(r, 3000))
+              }
+            }
+          }
+        } catch {}
+
+        if (!success) {
+          spinRef.current?.stop()
+          spinRef.current = null
+          setGoingOnline(false)
+          isAnimatingRef.current = false
+          showAlert('Không thể xử lý', 'Không thể ghi chuyến lên blockchain. Vui lòng thử lại.')
+          return
+        }
+
+        await clearPendingTrip()
+        spinRef.current?.stop()
+        spinRef.current = null
+        setGoingOnline(false)
+        isAnimatingRef.current = false
+        showAlert('Thông báo', 'Đã ghi chuyến thành công.', [
+          { text: 'OK', onPress: () => goOnline() },
+        ])
+        return
+      } else {
+        // Format cũ không đủ dữ liệu re-submit — xóa để không block mãi
+        await clearPendingTrip().catch(() => {})
+      }
+    }
+
+    goOnline()
+  }
+
+  function goOnline() {
+    if (!driverInfo) return
     isAnimatingRef.current = true
     setGoingOnline(true)
     navigatingRef.current = true
     startSpinner()
+    setDriverPendingTrip(driverInfo.uid, false).catch(() => {})
     SecureStore.setItemAsync(
       SecureStoreKey.DRIVER_INFO,
       JSON.stringify({ ...driverInfo, status: 'ready' as DriverStatus }),

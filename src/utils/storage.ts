@@ -46,31 +46,23 @@ export async function clearPendingTrip(): Promise<void> {
   await SecureStore.deleteItemAsync(SecureStoreKey.PENDING_TRIP)
 }
 
-// ─── PendingPenalty (mảng — tích lũy nhiều lần hủy chuyến) ──────────────────
+// ─── PendingPenalty (single object — hủy chuyến chưa trừ được ODC) ──────────
 
-export async function getPendingPenalties(): Promise<PendingPenalty[]> {
+export async function getPenaltyTrip(): Promise<PendingPenalty | null> {
   const raw = await SecureStore.getItemAsync(SecureStoreKey.PENDING_PENALTY)
-  if (!raw) return []
+  if (!raw) return null
   const parsed = JSON.parse(raw)
-  // backward compat: nếu là object cũ (single) thì wrap lại thành mảng
-  return Array.isArray(parsed) ? parsed : [parsed]
+  // bỏ qua nếu còn format array cũ
+  if (Array.isArray(parsed)) return null
+  return parsed as PendingPenalty
 }
 
-export async function addPendingPenalty(p: PendingPenalty): Promise<void> {
-  const existing = await getPendingPenalties()
-  await SecureStore.setItemAsync(SecureStoreKey.PENDING_PENALTY, JSON.stringify([...existing, p]))
+export async function savePenaltyTrip(p: PendingPenalty): Promise<void> {
+  await SecureStore.setItemAsync(SecureStoreKey.PENDING_PENALTY, JSON.stringify(p))
 }
 
-export async function clearPendingPenalty(): Promise<void> {
+export async function clearPenaltyTrip(): Promise<void> {
   await SecureStore.deleteItemAsync(SecureStoreKey.PENDING_PENALTY)
-}
-
-export async function savePendingPenalties(list: PendingPenalty[]): Promise<void> {
-  if (list.length === 0) {
-    await SecureStore.deleteItemAsync(SecureStoreKey.PENDING_PENALTY)
-  } else {
-    await SecureStore.setItemAsync(SecureStoreKey.PENDING_PENALTY, JSON.stringify(list))
-  }
 }
 
 // ─── CustomerInfo ─────────────────────────────────────────────────────────────

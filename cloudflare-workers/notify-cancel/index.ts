@@ -82,7 +82,7 @@ export default {
 
     const { tripId, reason, targetFcmToken, cancellerName } = body
     if (!tripId || !reason || !targetFcmToken) return json({ success: false, error: 'Missing fields' }, 400)
-    if (reason !== 'driver' && reason !== 'customer' && reason !== 'delivery_complete')
+    if (reason !== 'driver' && reason !== 'customer' && reason !== 'delivery_complete' && reason !== 'approaching_dropoff')
       return json({ success: false, error: 'Invalid reason' }, 400)
 
     try {
@@ -93,7 +93,11 @@ export default {
       let bodyText: string
       const dataPayload: Record<string, string> = { tripId }
 
-      if (reason === 'delivery_complete') {
+      if (reason === 'approaching_dropoff') {
+        title    = 'Tài xế đã đến nơi'
+        bodyText = 'Hãy đánh giá chuyến đi của bạn!'
+        dataPayload.type = 'approaching_dropoff'
+      } else if (reason === 'delivery_complete') {
         title    = 'Giao hàng thành công'
         bodyText = 'Tài xế đã giao hàng đến điểm đến. Hãy đánh giá trải nghiệm của bạn!'
         dataPayload.type = 'delivery_complete'

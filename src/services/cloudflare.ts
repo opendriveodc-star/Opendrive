@@ -110,7 +110,7 @@ export async function miningReport(uid: string, rounds: number): Promise<MiningR
 // Worker 10: Gửi FCM thông báo hủy chuyến hoặc giao hàng thành công
 export async function notifyCancel(
   tripId:        string,
-  reason:        'driver' | 'customer' | 'delivery_complete',
+  reason:        'driver' | 'customer' | 'delivery_complete' | 'approaching_dropoff',
   targetFcmToken: string,
   cancellerName?: string,
 ): Promise<void> {

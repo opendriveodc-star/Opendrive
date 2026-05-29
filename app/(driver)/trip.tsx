@@ -14,7 +14,7 @@ import * as Location from 'expo-location'
 import * as Notifications from 'expo-notifications'
 import MapView from '../../src/components/MapView'
 import type { MapViewHandle } from '../../src/components/MapView'
-import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip, saveDriverInfo, savePendingTrip, addPendingPenalty } from '../../src/utils/storage'
+import { getPendingTrip, getDriverInfo, getEncryptedKey, clearPendingTrip, saveDriverInfo, savePenaltyTrip } from '../../src/utils/storage'
 import { recordTrip, notifyCancel, sosAlert } from '../../src/services/cloudflare'
 import { updateDriverStatus, setDriverPendingTrip, incrementCustomerPenalty, setCustomerLockedUntil } from '../../src/services/firestore'
 import { encodeMemo, encodeSosMemo } from '../../src/services/odc'
@@ -58,11 +58,7 @@ export default function TripScreen() {
   const [sosSent,          setSosSent]          = useState(false)
   const [abandoning,       setAbandoning]       = useState(false)
   const [freightInfo,      setFreightInfo]      = useState<FreightInfo | null>(null)
-  const [waitingText,      setWaitingText]      = useState('')
-
   const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null)
-  const ratingPollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
-  const ratingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pickedUpRef      = useRef(false)
   const pendingTripRef      = useRef<PendingTrip | null>(null)
   const driverInfoRef       = useRef<DriverInfo | null>(null)
@@ -71,7 +67,6 @@ export default function TripScreen() {
   const pickupProximityRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const dropLatRef          = useRef<number | null>(null)
   const dropLngRef          = useRef<number | null>(null)
-  const navNotifIdRef       = useRef<string | null>(null)
   const customerFcmTokenRef = useRef<string>('')
   const cancelledHandledRef = useRef(false)
   const abandoningRef       = useRef(false)
@@ -144,7 +139,6 @@ export default function TripScreen() {
               setDistToPickup(dist)
               if (dist <= 0.15) {
                 setNearPickup(true)
-                dismissNavNotif()
                 if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
               }
             } catch {}
@@ -166,7 +160,6 @@ export default function TripScreen() {
     if (intervalRef.current)        { clearInterval(intervalRef.current);        intervalRef.current        = null }
     if (proximityRef.current)       { clearInterval(proximityRef.current);       proximityRef.current       = null }
     if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
-    dismissNavNotif()
 
     // Tài xế ghi penalty thay khách — tránh khách tắt mạng để lách phạt
     const customerPhone = pendingTripRef.current?.customerPhone
@@ -276,100 +269,96 @@ export default function TripScreen() {
     if (abandoningRef.current) return
     showAlert(t('trip.abandonTrip'), t('trip.abandonConfirm'), [
       { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('trip.abandonTrip'), style: 'destructive',
-        onPress: async () => {
-          if (abandoningRef.current) return
-          abandoningRef.current = true
-
-          const trip = pendingTripRef.current
-          const drv  = driverInfoRef.current
-
-          // Lưu cờ cancelling trước tiên — bảo vệ TH app bị kill trong lúc hủy
-          if (trip) await savePendingTrip({ ...trip, cancelling: true }).catch(() => {})
-
-          setAbandoning(true)  // khóa button + hiện spinner
-
-          if (intervalRef.current)        { clearInterval(intervalRef.current);        intervalRef.current = null }
-          if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
-          if (proximityRef.current)       { clearInterval(proximityRef.current);       proximityRef.current = null }
-
-          // Kiểm tra khách có hủy trước không (FCM có thể không đến tài xế)
-          let customerAlreadyCancelled = false
-          if (trip) {
-            try {
-              customerAlreadyCancelled = (await rtdb.get<boolean>(`trips/${trip.tripId}/cancelled_by_customer`)) === true
-            } catch {}
-          }
-
-          if (customerAlreadyCancelled) {
-            // Khách là người hủy → tài xế là nạn nhân, không trừ ODC tài xế
-            // Ghi penalty cho khách vì FCM fail nên handleCustomerCancelledAlert chưa ghi
-            if (trip) {
-              const amount = pickedUpRef.current ? 2 : 1
-              incrementCustomerPenalty(trip.customerPhone, amount)
-                .then(newCount => {
-                  if (newCount >= 3) setCustomerLockedUntil(trip.customerPhone, Date.now() + 48 * 60 * 60 * 1000).catch(() => {})
-                })
-                .catch(() => {})
-            }
-          } else {
-            // Tài xế thật sự bỏ chuyến — đánh dấu RTDB để khách biết nếu FCM không đến
-            if (trip) rtdb.set(`trips/${trip.tripId}/cancelled_by_driver`, true).catch(() => {})
-            // Trừ ODC tài xế
-            if (trip && drv) {
-              getEncryptedKey().then(key => {
-                if (!key) throw new Error('no key')
-                return recordTrip({
-                  driverUid: drv.uid, rating: 1, tripPrice: trip.tripPrice,
-                  memo27bytes: encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, 1),
-                  isCancelled: true, encryptedPrivateKey: key,
-                })
-              }).catch(async () => {
-                await addPendingPenalty({
-                  driverUid:    drv.uid,
-                  tripPrice:    trip.tripPrice,
-                  memo27Base64: encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, 1),
-                }).catch(() => {})
-              })
-            }
-
-            // Phạt khách nếu tài xế đã đến điểm đón
-            if (pickedUpRef.current && trip) {
-              incrementCustomerPenalty(trip.customerPhone, 2).catch(() => {})
-            }
-
-            // Thông báo khách qua FCM
-            if (trip && customerFcmTokenRef.current && drv) {
-              notifyCancel(trip.tripId, 'driver', customerFcmTokenRef.current, drv.name).catch(() => {})
-            }
-          }
-
-          // [BLOCKING] Firestore: status='ready' + pendingTrip=false — retry 3 lần
-          if (drv) {
-            for (let i = 0; i < 3; i++) {
-              try {
-                await Promise.all([
-                  updateDriverStatus(drv.uid, 'ready'),
-                  setDriverPendingTrip(drv.uid, false),
-                ])
-                break
-              } catch {
-                if (i < 2) await new Promise<void>(r => setTimeout(r, 2000))
-              }
-            }
-          }
-
-          // Xóa dữ liệu local + chuyển trang
-          // Khách đã hủy trước → xóa RTDB trip luôn; tài xế hủy → để khách xóa sau khi nhận thông báo
-          await clearPendingTrip()
-          if (customerAlreadyCancelled && trip) rtdb.delete(`trips/${trip.tripId}`).catch(() => {})
-          if (drv) saveDriverInfo({ ...drv, status: 'ready' }).catch(() => {})
-          dismissNavNotif()
-          router.replace('/(driver)/online')
-        },
-      },
+      { text: t('trip.abandonTrip'), style: 'destructive', onPress: doAbandon },
     ])
+  }
+
+  async function doAbandon() {
+    if (abandoningRef.current) return
+    abandoningRef.current = true
+
+    const trip = pendingTripRef.current
+    const drv  = driverInfoRef.current
+
+    setAbandoning(true)
+
+    if (intervalRef.current)        { clearInterval(intervalRef.current);        intervalRef.current = null }
+    if (pickupProximityRef.current) { clearInterval(pickupProximityRef.current); pickupProximityRef.current = null }
+    if (proximityRef.current)       { clearInterval(proximityRef.current);       proximityRef.current = null }
+
+    // SecureStore status='ready' trước tất cả — crash recovery sẽ nhận ra đây không phải chuyến active
+    if (drv) await saveDriverInfo({ ...drv, status: 'ready' }).catch(() => {})
+
+    // Kiểm tra khách có hủy trước không (FCM có thể không đến kịp)
+    let customerAlreadyCancelled = false
+    if (trip) {
+      try {
+        customerAlreadyCancelled = (await rtdb.get<boolean>(`trips/${trip.tripId}/cancelled_by_customer`)) === true
+      } catch {}
+    }
+
+    let odcSuccess = true
+
+    if (customerAlreadyCancelled) {
+      // Khách hủy trước → tài xế là nạn nhân, ghi penalty khách
+      if (trip) {
+        const amount = pickedUpRef.current ? 2 : 1
+        incrementCustomerPenalty(trip.customerPhone, amount)
+          .then(count => {
+            if (count >= 3) setCustomerLockedUntil(trip.customerPhone, Date.now() + 48 * 60 * 60 * 1000).catch(() => {})
+          })
+          .catch(() => {})
+      }
+    } else {
+      // Tài xế thật sự bỏ chuyến
+      if (trip) rtdb.set(`trips/${trip.tripId}/cancelled_by_driver`, true).catch(() => {})
+      if (trip && customerFcmTokenRef.current && drv) {
+        notifyCancel(trip.tripId, 'driver', customerFcmTokenRef.current, drv.name).catch(() => {})
+      }
+      if (pickedUpRef.current && trip) {
+        incrementCustomerPenalty(trip.customerPhone, 2).catch(() => {})
+      }
+
+      // [BLOCKING] Trừ ODC — 3 lần, timeout 8s mỗi lần, chờ 3s giữa các lần
+      if (trip && drv) {
+        const memo = encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, 1)
+        odcSuccess = false
+        for (let i = 0; i < 3; i++) {
+          try {
+            const key = await getEncryptedKey()
+            if (!key) break
+            await Promise.race([
+              recordTrip({ driverUid: drv.uid, rating: 1, tripPrice: trip.tripPrice, memo27bytes: memo, isCancelled: true, encryptedPrivateKey: key }),
+              new Promise<never>((_, r) => setTimeout(() => r(new Error('timeout')), 8000)),
+            ])
+            odcSuccess = true
+            break
+          } catch {
+            if (i < 2) await new Promise<void>(r => setTimeout(r, 3000))
+          }
+        }
+        if (!odcSuccess) {
+          await savePenaltyTrip({ driverUid: drv.uid, tripPrice: trip.tripPrice, memo27Base64: memo }).catch(() => {})
+        }
+      }
+    }
+
+    // Firestore update — fire-and-forget, home.tsx sẽ fix nếu fail
+    if (drv) {
+      updateDriverStatus(drv.uid, 'ready').catch(() => {})
+      setDriverPendingTrip(drv.uid, false).catch(() => {})
+    }
+
+    await clearPendingTrip()
+    if (customerAlreadyCancelled && trip) rtdb.delete(`trips/${trip.tripId}`).catch(() => {})
+
+    if (!customerAlreadyCancelled && !odcSuccess) {
+      showAlert('Thông báo', 'Không thể trừ ODC lúc này. Sẽ xử lý trước khi Sẵn sàng lại.', [
+        { text: 'OK', onPress: () => router.replace('/(driver)/home') },
+      ])
+    } else {
+      router.replace('/(driver)/online')
+    }
   }
 
   function handlePickedUp() {
@@ -397,18 +386,14 @@ export default function TripScreen() {
         setDistToDropoff(dist)
         if (dist <= 0.15) {
           setNearDropoff(true)
-          dismissNavNotif()
           if (proximityRef.current) { clearInterval(proximityRef.current); proximityRef.current = null }
+          // Gửi FCM cho khách (cả passenger lẫn freight) để mở rating screen
+          if (customerFcmTokenRef.current && pendingTripRef.current) {
+            notifyCancel(pendingTripRef.current.tripId, 'approaching_dropoff', customerFcmTokenRef.current).catch(() => {})
+          }
         }
       } catch {}
     }, 15000)
-  }
-
-  function dismissNavNotif() {
-    if (navNotifIdRef.current) {
-      Notifications.dismissNotificationAsync(navNotifIdRef.current).catch(() => {})
-      navNotifIdRef.current = null
-    }
   }
 
   function handleOpenMaps() {
@@ -417,120 +402,96 @@ export default function TripScreen() {
     const lng = pickedUp ? dropLng : pendingTrip.pickupLng
     if (!lat || !lng) return
     const mode = driverInfoRef.current?.vehicleType === 'motorbike' ? 'l' : 'd'
-    openNavigation(lat, lng, mode)
-  }
-
-  function openNavigation(lat: number, lng: number, mode: 'l' | 'd') {
     const navUrl = `google.navigation:q=${lat},${lng}&mode=${mode}`
     const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`
-
-    dismissNavNotif()
     Linking.openURL(navUrl).catch(() =>
       Linking.openURL(fallbackUrl).catch(() => showAlert(t('common.error'), t('error.unknown')))
     )
-
-    const label = pickedUp ? 'Đang đến điểm đến' : 'Đang đến điểm đón'
-    Notifications.scheduleNotificationAsync({
-      content: {
-        title: `📍 ${label}`,
-        body: 'Nhấn để quay lại OpenDrive',
-        sticky: true,
-        data: { screen: 'trip' },
-      },
-      trigger: null,
-    }).then(id => { navNotifIdRef.current = id }).catch(() => {})
   }
 
   function handleEndTrip() {
     const isFreight = !!freightInfo
     showAlert(
       t('trip.completed'),
-      isFreight ? t('trip.freightCompleteConfirm') : t('trip.waitForRating'),
+      isFreight ? t('trip.freightCompleteConfirm') : t('trip.completedConfirm'),
       [
         { text: t('common.cancel'), style: 'cancel' },
-        {
-          text: t('common.confirm'),
-          onPress: () => {
-            if (!pendingTrip) return
-            if (isFreight) {
-              handleEndFreightTrip()
-            } else {
-              rtdb.set(`trips/${pendingTrip.tripId}/trip_status`, 'completed').catch(() => {})
-              setWaitingForRating(true)
-              startRatingPoll()
-            }
-          },
-        },
+        { text: t('common.confirm'), onPress: doEndTrip },
       ],
     )
   }
 
-  async function handleEndFreightTrip() {
-    if (!pendingTrip) return
-    // Gửi FCM thông báo giao hàng thành công cho khách
-    if (customerFcmTokenRef.current) {
-      notifyCancel(pendingTrip.tripId, 'delivery_complete', customerFcmTokenRef.current).catch(() => {})
-    }
-    // Hiện spinner + submit blockchain ngay với rating mặc định 5
-    setWaitingText(t('trip.processingDelivery'))
-    setWaitingForRating(true)
-    await submitTrip(5 as RatingValue)
-  }
-
-  function startRatingPoll() {
-    if (!pendingTrip) return
-    const tripId = pendingTrip.tripId
-    ratingPollRef.current = setInterval(async () => {
-      try {
-        const rating = await rtdb.get<number>(`trips/${tripId}/rating`)
-        if (rating != null) { stopRatingPoll(); submitTrip(rating as RatingValue) }
-      } catch {}
-    }, 2000)
-    ratingTimeoutRef.current = setTimeout(() => {
-      stopRatingPoll()
-      submitTrip(3 as RatingValue)
-    }, 30_000)
-  }
-
-  function stopRatingPoll() {
-    if (ratingPollRef.current)    clearInterval(ratingPollRef.current)
-    if (ratingTimeoutRef.current) clearTimeout(ratingTimeoutRef.current)
-    ratingPollRef.current    = null
-    ratingTimeoutRef.current = null
-  }
-
-  async function submitTrip(rating: RatingValue) {
-    if (!pendingTrip || !driverInfo || submitting) return
+  async function doEndTrip() {
+    const trip = pendingTripRef.current
+    const drv  = driverInfoRef.current
+    if (!trip || !drv || submitting) return
     setSubmitting(true)
+    setWaitingForRating(true)
+
+    const isFreight = !!freightInfo
+
+    // Bước 1: SecureStore status='ready' TRƯỚC — crash sau blockchain sẽ không route về pending-trip
+    await saveDriverInfo({ ...drv, status: 'ready' }).catch(() => {})
+
+    // Bước 2: Đọc rating RTDB 1 lần → default 3
+    let finalRating: RatingValue = 3
     try {
-      const encryptedPrivateKey = await getEncryptedKey()
-      if (!encryptedPrivateKey) throw new Error('No encrypted key')
-      const memo27bytes = encodeMemo(
-        driverInfo.phone, pendingTrip.customerPhone,
-        pendingTrip.pickupGeohash, pendingTrip.dropGeohash, rating,
-      )
-      await recordTrip({
-        driverUid: driverInfo.uid, rating, tripPrice: pendingTrip.tripPrice,
-        memo27bytes, isCancelled: false, encryptedPrivateKey,
-      })
-      const isFirstTrip = !driverInfo.firstTripDone
-      if (isFirstTrip) await saveDriverInfo({ ...driverInfo, firstTripDone: true }).catch(() => {})
-      await clearPendingTrip()
-      setDriverPendingTrip(driverInfo.uid, false).catch(() => {})
-      await updateDriverStatus(driverInfo.uid, 'ready')
-      await rtdb.delete(`trips/${pendingTrip.tripId}`).catch(() => {})
-      dismissNavNotif()
-      if (isFirstTrip) {
-        showAlert(t('trip.firstTripTitle'), t('trip.firstTripBonus'), [
-          { text: 'OK', onPress: () => router.replace('/(driver)/online') },
-        ])
-      } else {
-        router.replace('/(driver)/online')
+      const r = await rtdb.get<number>(`trips/${trip.tripId}/rating`)
+      if (r != null && r >= 1 && r <= 5) finalRating = r as RatingValue
+    } catch {}
+
+    // Bước 3: Lưu rating + memo vào pendingTrip (crash recovery)
+    const memo = encodeMemo(drv.phone, trip.customerPhone, trip.pickupGeohash, trip.dropGeohash, finalRating)
+    await savePendingTrip({ ...trip, rating: finalRating, memo27Base64: memo }).catch(() => {})
+
+    // Bước 4: Freight → FCM delivery_complete cho khách hàng hóa
+    if (isFreight && customerFcmTokenRef.current) {
+      notifyCancel(trip.tripId, 'delivery_complete', customerFcmTokenRef.current).catch(() => {})
+    }
+
+    // Bước 5: BLOCKING recordTrip — retry 3×8s, chờ 3s giữa các lần
+    const key = await getEncryptedKey()
+    let success = false
+    if (key) {
+      for (let i = 0; i < 3; i++) {
+        try {
+          await Promise.race([
+            recordTrip({ driverUid: drv.uid, rating: finalRating, tripPrice: trip.tripPrice, memo27bytes: memo, isCancelled: false, encryptedPrivateKey: key }),
+            new Promise<never>((_, r) => setTimeout(() => r(new Error('timeout')), 8000)),
+          ])
+          success = true
+          break
+        } catch {
+          if (i < 2) await new Promise<void>(r => setTimeout(r, 3000))
+        }
       }
-    } catch (e) {
+    }
+
+    if (!success) {
+      // pendingTrip giữ nguyên (có rating + memo + status='ready') → xử lý ở Sẵn sàng
       setSubmitting(false)
       setWaitingForRating(false)
-      showAlert(t('common.error'), String(e))
+      showAlert('Thông báo', 'Không thể ghi chuyến lúc này. Sẽ xử lý trước khi Sẵn sàng lại.', [
+        { text: 'OK', onPress: () => router.replace('/(driver)/home') },
+      ])
+      return
+    }
+
+    // Thành công — đánh dấu completed TRƯỚC khi xóa (chống double-submission)
+    const isFirstTrip = !drv.firstTripDone
+    if (isFirstTrip) await saveDriverInfo({ ...drv, firstTripDone: true, status: 'ready' }).catch(() => {})
+    await savePendingTrip({ ...trip, rating: finalRating, memo27Base64: memo, completed: true }).catch(() => {})
+    await clearPendingTrip()
+    setDriverPendingTrip(drv.uid, false).catch(() => {})
+    updateDriverStatus(drv.uid, 'ready').catch(() => {})
+    rtdb.delete(`trips/${trip.tripId}`).catch(() => {})
+
+    if (isFirstTrip) {
+      showAlert(t('trip.firstTripTitle'), t('trip.firstTripBonus'), [
+        { text: 'OK', onPress: () => router.replace('/(driver)/online') },
+      ])
+    } else {
+      router.replace('/(driver)/online')
     }
   }
 
@@ -546,7 +507,7 @@ export default function TripScreen() {
     return (
       <View style={styles.fullCenter}>
         <ActivityIndicator size="large" color={BRAND} />
-        <Text style={styles.waitText}>{waitingText || t('trip.waitForRating')}</Text>
+        <Text style={styles.waitText}>{t('trip.processingTrip')}</Text>
       </View>
     )
   }

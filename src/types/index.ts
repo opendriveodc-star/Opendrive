@@ -24,6 +24,7 @@ export enum SecureStoreKey {
   CUSTOMER_INFO         = 'customer_info',
   CUSTOMER_LOCK_UNTIL   = 'customer_lock_until',
   CUSTOMER_CANCEL_COUNT = 'customer_cancel_count',
+  CUSTOMER_FCM_TOKEN    = 'customer_fcm_token',
   MINER_INFO            = 'miner_info',
   MINER_SESSION        = 'miner_session',
   USER_ROLE            = 'user_role',
@@ -153,7 +154,8 @@ export interface PendingTrip {
   pickupLng:     number
   customerPhone: string
   rating:        RatingValue | null  // null cho đến khi khách đánh giá
-  cancelling?:   boolean            // đang trong quá trình hủy — set trước khi spinner
+  memo27Base64?: string              // pre-computed memo để re-submit nếu blockchain fail
+  completed?:    boolean             // đánh dấu blockchain đã submit — chống double-submission
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

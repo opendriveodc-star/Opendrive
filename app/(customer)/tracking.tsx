@@ -14,7 +14,7 @@ import * as Notifications from 'expo-notifications'
 import { TRIP } from '../../src/constants'
 import { rtdb } from '../../src/services/firebase'
 import { notifyCancel, sosAlert } from '../../src/services/cloudflare'
-import { getCurrentLocation, distanceKm } from '../../src/services/location'
+import { getCurrentLocation } from '../../src/services/location'
 import { encodeSosMemo } from '../../src/services/odc'
 import SosButton from '../../src/components/SosButton'
 import { SecureStoreKey } from '../../src/types'
@@ -206,13 +206,13 @@ export default function TrackingScreen() {
       const data = notification.request.content.data as Record<string, string>
       if (data?.type === 'trip_cancelled' && data?.reason === 'driver') {
         handleDriverCancelledAlert(data?.cancellerName)
-      } else if (data?.type === 'delivery_complete') {
+      } else if (data?.type === 'approaching_dropoff' || data?.type === 'delivery_complete') {
         navigateToRating()
       }
     })
     const subBg = Notifications.addNotificationResponseReceivedListener(response => {
       const data = response.notification.request.content.data as Record<string, string>
-      if (data?.type === 'delivery_complete') navigateToRating()
+      if (data?.type === 'approaching_dropoff' || data?.type === 'delivery_complete') navigateToRating()
     })
     return () => { subFg.remove(); subBg.remove() }
   }, [tripId])
@@ -290,36 +290,6 @@ export default function TrackingScreen() {
     })
   }
 
-  // Khi đã lên xe, kiểm tra vị trí khách mỗi 5s – hiện bảng đánh giá khi còn ≤150m đến điểm đến
-  useEffect(() => {
-    if (tripStatus !== 'picked_up') return
-
-    const check = setInterval(async () => {
-      if (completedRef.current) { clearInterval(check); return }
-      // Backup: tài xế hủy sau khi đón khách
-      try {
-        const driverCancelled = await rtdb.get<boolean>(`trips/${tripId}/cancelled_by_driver`)
-        if (driverCancelled === true && !cancelledHandledRef.current) {
-          clearInterval(check)
-          handleDriverCancelledAlert()
-          return
-        }
-      } catch {}
-      const dropLat = tripInfoRef.current?.dropLat
-      const dropLng = tripInfoRef.current?.dropLng
-      if (!dropLat || !dropLng) return
-      try {
-        const loc  = await getCurrentLocation()
-        const dist = distanceKm(loc.lat, loc.lng, dropLat, dropLng)
-        if (dist <= 0.15) {
-          clearInterval(check)
-          navigateToRating()
-        }
-      } catch {}
-    }, 5000)
-
-    return () => clearInterval(check)
-  }, [tripStatus])
 
   async function handleSOS() {
     if (sosSent) return
