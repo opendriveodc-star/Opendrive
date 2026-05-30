@@ -339,7 +339,12 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
     - Xe máy: bỏ qua kiểm tra màu biển hoàn toàn
     - `plateInvalid` + `plateInvalidMsg` state — thông báo khác nhau cho trắng/xanh vs không rõ
   - **i18n** vi/en: thêm 11 keys mới dưới `register.*` — `scanBtn`, `scanPlaceholder`, `scanIncompleteTitle`, `scanIncompleteBody`, `scanError`, `scanRequired`, `plateInvalidYellow`, `plateInvalidUnknown`, `scanMissingPlate/Brand/Color`
-  - **Logic biển số cuối cùng:** `(V)` → cho qua; `(X)` → block; `(T)/unknown` + không có SEAT → xe máy → cho qua; `(T)/unknown` + có SEAT → xe ô tô/tải không phải biển vàng → block
+  - **Logic biển số cuối cùng:**
+    - `(V)` → cho qua
+    - `(X)` → block "Xe không hợp lệ – chỉ chấp nhận xe kinh doanh biển vàng"
+    - `(T)/unknown` + không có SEAT → xe máy → cho qua
+    - `(T)` + có SEAT → block "Xe không hợp lệ – chỉ chấp nhận xe kinh doanh biển vàng"
+    - `unknown` + có SEAT → block "Không xác định được màu biển số, vui lòng chụp lại rõ hơn" (phân biệt với biển trắng xác nhận)
   - **Tài xế tự chọn:** loại xe + loại hình vận chuyển (không lock sau scan)
 
 ### Bàn giao Session 45 – Bắt đầu từ đây

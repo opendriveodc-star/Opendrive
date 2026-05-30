@@ -101,7 +101,10 @@ export default function DriverInfoScreen() {
         if (isMotorbike) {
           setPlateInvalid(false); setPlateInvalidMsg('')
         } else {
-          setPlateInvalid(true); setPlateInvalidMsg(t('register.plateInvalidYellow'))
+          setPlateInvalid(true)
+          setPlateInvalidMsg(parsed.plateColor === 'white'
+            ? t('register.plateInvalidYellow')
+            : t('register.plateInvalidUnknown'))
         }
       }
 

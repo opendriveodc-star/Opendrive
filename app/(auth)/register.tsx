@@ -103,7 +103,11 @@ export default function RegisterScreen() {
         if (isMotorbike) {
           setPlateInvalid(false); setPlateInvalidMsg('')
         } else {
-          setPlateInvalid(true); setPlateInvalidMsg(t('register.plateInvalidYellow'))
+          setPlateInvalid(true)
+          // (T) = biết chắc biển trắng; unknown = không chụp rõ ký hiệu màu biển
+          setPlateInvalidMsg(parsed.plateColor === 'white'
+            ? t('register.plateInvalidYellow')
+            : t('register.plateInvalidUnknown'))
         }
       }
 
