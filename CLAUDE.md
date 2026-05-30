@@ -6,7 +6,7 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-30 (session 43 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-30 (session 44 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
@@ -323,11 +323,29 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
   - **`PendingTrip` type:** thêm `memo27Base64?` và `completed?`
   - **i18n** vi/en: `waitForRating`/`processingDelivery` → `completedConfirm`/`processingTrip`
 
-### Bàn giao Session 44 – Bắt đầu từ đây
+- **Session 44:** Scan giấy đăng ký xe (OCR) cho tài xế ✅
+  - **Package mới:** `@react-native-ml-kit/text-recognition ^2.0.0` — on-device OCR, free, offline
+  - **`src/utils/parseVehicleCard.ts`** — parser OCR giấy đăng ký xe VN:
+    - Dùng keyword tiếng Anh (Brand/Color/Seat/Sit) vì OCR đọc ASCII chính xác hơn chữ có dấu
+    - Biển số: regex `\d{2}[A-Z]{1,2}-[\d.]{4,9}`
+    - Màu biển `(V)/(T)/(X)`: tìm trong vùng ±150 ký tự quanh biển số (bắt được cả khi nằm trên/dưới/cạnh)
+    - Loại xe: có `Seat` → xác định theo số chỗ (1-3=truck, 4-6=car4, 7+=car6); không có `Seat` → xe máy
+    - `extractAfterColon()`: lấy phần sau dấu `:` cuối dòng, bỏ qua label phụ tiếng Anh
+  - **`app/(auth)/register.tsx`** + **`app/(driver)/driver-info.tsx`**:
+    - Nút "Scan thẻ ĐK xe" nền navy cạnh section header "Thông tin xe"
+    - Sau scan: tự điền + khóa nhãn hiệu, màu, biển số, loại xe — không cho tự nhập
+    - `transportModel` tự lock nếu xe chỉ thuộc 1 model (car4/car6→passenger, truck/pickup→freight); xe máy tự do chọn
+    - Biển `(V)` → cho đăng ký; biển `(T)/(X)` → điền thông tin nhưng disable nút + banner cảnh báo; unknown → block với thông báo "không xác định được màu biển, chụp lại rõ hơn"
+    - Xe máy: bỏ qua kiểm tra màu biển hoàn toàn
+    - `plateInvalid` + `plateInvalidMsg` state — thông báo khác nhau cho trắng/xanh vs không rõ
+  - **Debug:** `console.log('=== OCR RAW ===')` vẫn còn trong code (có thể xóa sau)
 
-**Tình trạng:** Flow hủy chuyến + hoàn thành chuyến đã refactor hoàn chỉnh. FCM rating unified.
+### Bàn giao Session 45 – Bắt đầu từ đây
+
+**Tình trạng:** Scan giấy đăng ký xe hoạt động ổn định. OCR dùng keyword tiếng Anh, phân biệt biển vàng/trắng/unknown.
 
 **Việc cần làm ngay:**
+- [ ] Xóa `console.log('=== OCR RAW ===')` trong `register.tsx` và `driver-info.tsx` trước khi build production
 - [ ] Set secrets Worker 11: `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` + `FIREBASE_PROJECT_ID` trong `cloudflare-workers/cleanup-auth-log/`
 
 ### Việc cần làm tiếp theo

@@ -197,8 +197,8 @@ const s = StyleSheet.create({
   // Logout
   logoutBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12,
-    borderWidth: 1, borderColor: '#E2E8F0',
+    paddingVertical: 12, paddingHorizontal: 20, borderRadius: 10,
+    backgroundColor: '#F1F5F9',
   },
   logoutText: { fontSize: 13, color: '#64748B', fontWeight: '500' },
 })

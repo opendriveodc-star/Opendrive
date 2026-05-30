@@ -18,6 +18,7 @@ import { createWallet } from '../../src/services/cloudflare'
 import { SecureStoreKey, VehicleType, DriverInfo } from '../../src/types'
 import { APP } from '../../src/constants'
 import { TRANSPORT_MODELS, TransportModel, VehicleKey } from '../../src/data/vehicles'
+import { parseVehicleCard } from '../../src/utils/parseVehicleCard'
 
 // Lazy – requires dev client rebuild with expo-image-picker + expo-image-manipulator + expo-camera
 let ImagePicker: typeof import('expo-image-picker') | null = null
@@ -26,6 +27,8 @@ let ExpoCamera: typeof import('expo-camera') | null = null
 try { ImagePicker = require('expo-image-picker') } catch { ImagePicker = null }
 try { ImageManipulator = require('expo-image-manipulator') } catch { ImageManipulator = null }
 try { ExpoCamera = require('expo-camera') } catch { ExpoCamera = null }
+let MlKitTextRecognition: any = null
+try { const m = require('@react-native-ml-kit/text-recognition'); MlKitTextRecognition = m.default ?? m } catch {}
 
 const BRAND       = '#1A2E5E'
 const BRAND_LIGHT = '#E8EDF6'
@@ -63,15 +66,93 @@ export default function RegisterScreen() {
   const vehicleOptions = currentModel.vehicles
 
   function handleModelChange(model: TransportModel) {
+    if (transportLocked) return
     setTransportModel(model)
-    const cfg = TRANSPORT_MODELS.find(m => m.key === model)!
-    if (!cfg.vehicles.find(v => v.key === vehicleType)) {
-      setVehicleType(cfg.vehicles[0].key)
+    if (!cardScanned) {
+      const cfg = TRANSPORT_MODELS.find(m => m.key === model)!
+      if (!cfg.vehicles.find(v => v.key === vehicleType)) {
+        setVehicleType(cfg.vehicles[0].key)
+      }
+    }
+  }
+
+  async function scanVehicleCard() {
+    if (!ImagePicker) {
+      showAlert(t('common.error'), 'Cần build lại app để dùng tính năng này')
+      return
+    }
+    if (!MlKitTextRecognition) {
+      showAlert(t('common.error'), 'Module OCR chưa được cài, cần build lại app')
+      return
+    }
+    const { status } = await ImagePicker.requestCameraPermissionsAsync()
+    if (status !== 'granted') {
+      showAlert(t('common.error'), 'Cần cấp quyền truy cập camera')
+      return
+    }
+    const picked = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.9 })
+    if (picked.canceled || !picked.assets[0]) return
+    setScanLoading(true)
+    try {
+      const recognized = await MlKitTextRecognition.recognize(picked.assets[0].uri)
+      console.log('=== OCR RAW ===\n', recognized.text)
+      const parsed = parseVehicleCard(recognized.text)
+
+      // Chặn biển trắng/xanh cho ô tô và xe tải (xe máy miễn kiểm tra)
+      const isMotorbike = parsed.vehicleType === 'motorbike'
+      if (isMotorbike) {
+        setPlateInvalid(false)
+        setPlateInvalidMsg('')
+      } else if (parsed.plateColor === 'yellow') {
+        setPlateInvalid(false)
+        setPlateInvalidMsg('')
+      } else if (parsed.plateColor === 'white' || parsed.plateColor === 'blue') {
+        setPlateInvalid(true)
+        setPlateInvalidMsg('Xe biển trắng/xanh không đủ điều kiện đăng ký tài xế')
+      } else {
+        // unknown – có thể bị che hoặc ảnh không rõ
+        setPlateInvalid(true)
+        setPlateInvalidMsg('Không xác định được màu biển số, vui lòng chụp lại rõ hơn')
+      }
+
+      if (parsed.licensePlate) setLicensePlate(parsed.licensePlate)
+      if (parsed.vehicleBrand)  setVehicleBrand(parsed.vehicleBrand)
+      if (parsed.vehicleColor)  setVehicleColor(parsed.vehicleColor)
+      if (parsed.vehicleType) {
+        const vt = parsed.vehicleType as VehicleKey
+        setVehicleType(vt)
+        if (['car4', 'car6'].includes(vt)) {
+          setTransportModel('passenger'); setTransportLocked(true)
+        } else if (['pickup', 'truck'].includes(vt)) {
+          setTransportModel('freight'); setTransportLocked(true)
+        } else {
+          setTransportLocked(false)
+        }
+      }
+      setCardScanned(true)
+      const missing = ([
+        !parsed.licensePlate && 'biển số',
+        !parsed.vehicleBrand  && 'nhãn hiệu',
+        !parsed.vehicleColor  && 'màu xe',
+        !parsed.vehicleType   && 'loại xe',
+      ] as (string | false)[]).filter(Boolean) as string[]
+      if (missing.length) {
+        showAlert('Scan chưa đủ', `Không đọc được: ${missing.join(', ')}. Chụp lại rõ hơn hoặc đủ ánh sáng nhé.`)
+      }
+    } catch {
+      showAlert(t('common.error'), 'Không đọc được thẻ đăng ký. Vui lòng thử lại.')
+    } finally {
+      setScanLoading(false)
     }
   }
   const [licensePlate,    setLicensePlate]    = useState('')
   const [referralCode,    setReferralCode]    = useState('')
   const [scanning,        setScanning]        = useState(false)
+  const [cardScanned,     setCardScanned]     = useState(false)
+  const [scanLoading,     setScanLoading]     = useState(false)
+  const [transportLocked, setTransportLocked] = useState(false)
+  const [plateInvalid,    setPlateInvalid]    = useState(false)
+  const [plateInvalidMsg, setPlateInvalidMsg] = useState('')
   const [termsChecked,    setTermsChecked]    = useState(false)
   const [loading,         setLoading]         = useState(false)
   const [avatarUri,       setAvatarUri]       = useState<string | null>(null)
@@ -145,8 +226,12 @@ export default function RegisterScreen() {
       showAlert(t('common.error'), 'Vui lòng thêm ảnh đại diện')
       return
     }
-    if (!name.trim() || !vehicleBrand.trim() || !licensePlate.trim()) {
-      showAlert(t('common.error'), 'Vui lòng điền đầy đủ thông tin')
+    if (!name.trim()) {
+      showAlert(t('common.error'), 'Vui lòng nhập tên tài xế')
+      return
+    }
+    if (!cardScanned || !vehicleBrand || !licensePlate) {
+      showAlert(t('common.error'), 'Vui lòng scan thẻ đăng ký xe')
       return
     }
     if (!termsChecked) {
@@ -323,9 +408,9 @@ export default function RegisterScreen() {
             return (
               <TouchableOpacity
                 key={m.key}
-                style={[s.modelBtn, active && s.modelBtnActive]}
+                style={[s.modelBtn, active && s.modelBtnActive, transportLocked && !active && { opacity: 0.35 }]}
                 onPress={() => handleModelChange(m.key)}
-                activeOpacity={0.8}
+                activeOpacity={transportLocked ? 1 : 0.8}
               >
                 <Ionicons name={m.icon as any} size={20} color={active ? '#fff' : BRAND} />
                 <Text style={[s.modelBtnText, active && s.modelBtnTextActive]}>
@@ -337,9 +422,22 @@ export default function RegisterScreen() {
         </View>
 
         {/* ── Thông tin xe ── */}
-        <View style={s.sectionHeader}>
-          <View style={s.sectionAccent} />
-          <Text style={s.sectionTitle}>{t('register.sectionVehicleInfo')}</Text>
+        <View style={{ flexDirection: 'row', width: '100%', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={s.sectionHeader}>
+            <View style={s.sectionAccent} />
+            <Text style={s.sectionTitle}>{t('register.sectionVehicleInfo')}</Text>
+          </View>
+          <TouchableOpacity style={s.scanCardBtn} onPress={scanVehicleCard} disabled={scanLoading} activeOpacity={0.75}>
+            {scanLoading
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <>
+                  <Ionicons name={cardScanned ? 'checkmark-circle' : 'scan-outline'} size={15} color={cardScanned ? '#86EFAC' : '#fff'} />
+                  <Text style={s.scanCardText}>
+                    {cardScanned ? 'Scan lại' : 'Scan thẻ ĐK xe'}
+                  </Text>
+                </>
+            }
+          </TouchableOpacity>
         </View>
 
         {/* Loại xe – scrollable 1 hàng, card dọc có thông số */}
@@ -355,9 +453,9 @@ export default function RegisterScreen() {
             return (
               <TouchableOpacity
                 key={key}
-                style={[s.vehicleBtn, vehicleOptions.length <= 3 ? { flex: 1 } : { width: VEHICLE_BTN_W }, active && s.vehicleBtnActive]}
-                onPress={() => setVehicleType(key)}
-                activeOpacity={0.8}
+                style={[s.vehicleBtn, vehicleOptions.length <= 3 ? { flex: 1 } : { width: VEHICLE_BTN_W }, active && s.vehicleBtnActive, cardScanned && !active && { opacity: 0.35 }]}
+                onPress={cardScanned ? undefined : () => setVehicleType(key)}
+                activeOpacity={cardScanned ? 1 : 0.8}
               >
                 <Ionicons name={icon as any} size={26} color={active ? '#fff' : BRAND} />
                 <Text style={[s.vehicleBtnText, active && s.vehicleBtnTextActive]}>
@@ -382,40 +480,28 @@ export default function RegisterScreen() {
           <Text style={s.scrollHint}>← Trượt qua lại để xem tiếp →</Text>
         )}
 
-        <View style={s.inputWrap}>
+        <View style={[s.inputWrap, s.lockedWrap]}>
           <Ionicons name="car-outline" size={18} color={BRAND} style={s.inputIcon} />
-          <TextInput
-            style={[s.input, { textTransform: 'uppercase' }]}
-            placeholder={t('register.brandPlaceholder')}
-            placeholderTextColor="#94A3B8"
-            value={vehicleBrand}
-            onChangeText={setVehicleBrand}
-            autoCapitalize="characters"
-          />
+          <Text style={vehicleBrand ? [s.input, { textTransform: 'uppercase' }] : s.lockedPlaceholder} numberOfLines={1}>
+            {vehicleBrand || 'Scan thẻ đăng ký xe'}
+          </Text>
+          <Ionicons name="lock-closed-outline" size={13} color={vehicleBrand ? BRAND : '#CBD5E1'} />
         </View>
 
-        <View style={s.inputWrap}>
+        <View style={[s.inputWrap, s.lockedWrap]}>
           <Ionicons name="color-palette-outline" size={18} color={BRAND} style={s.inputIcon} />
-          <TextInput
-            style={s.input}
-            placeholder={t('register.colorPlaceholder')}
-            placeholderTextColor="#94A3B8"
-            value={vehicleColor}
-            onChangeText={setVehicleColor}
-            autoCapitalize="words"
-          />
+          <Text style={vehicleColor ? s.input : s.lockedPlaceholder} numberOfLines={1}>
+            {vehicleColor || 'Scan thẻ đăng ký xe'}
+          </Text>
+          <Ionicons name="lock-closed-outline" size={13} color={vehicleColor ? BRAND : '#CBD5E1'} />
         </View>
 
-        <View style={s.inputWrap}>
+        <View style={[s.inputWrap, s.lockedWrap]}>
           <Ionicons name="card-outline" size={18} color={BRAND} style={s.inputIcon} />
-          <TextInput
-            style={[s.input, { textTransform: 'uppercase' }]}
-            placeholder={t('register.platePlaceholder')}
-            placeholderTextColor="#94A3B8"
-            value={licensePlate}
-            onChangeText={setLicensePlate}
-            autoCapitalize="characters"
-          />
+          <Text style={licensePlate ? [s.input, { textTransform: 'uppercase' }] : s.lockedPlaceholder} numberOfLines={1}>
+            {licensePlate || 'Scan thẻ đăng ký xe'}
+          </Text>
+          <Ionicons name="lock-closed-outline" size={13} color={licensePlate ? BRAND : '#CBD5E1'} />
         </View>
 
         {/* ── Mã giới thiệu bạn bè ── */}
@@ -473,7 +559,19 @@ export default function RegisterScreen() {
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={s.btn} onPress={handleRegister} disabled={loading} activeOpacity={0.85}>
+        {plateInvalid && (
+          <View style={s.plateWarnBanner}>
+            <Ionicons name="warning-outline" size={16} color="#B45309" />
+            <Text style={s.plateWarnText}>{plateInvalidMsg}</Text>
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={[s.btn, (loading || plateInvalid) && { opacity: 0.45 }]}
+          onPress={handleRegister}
+          disabled={loading || plateInvalid}
+          activeOpacity={0.85}
+        >
           <Text style={s.btnText}>{loading ? t('register.creating') : t('common.continue')}</Text>
         </TouchableOpacity>
 
@@ -815,5 +913,51 @@ const s = StyleSheet.create({
   successBold: {
     fontWeight: '700',
     color:      BRAND,
+  },
+
+  // ── Scan thẻ đăng ký xe ──
+  lockedWrap: {
+    backgroundColor: '#F8FAFC',
+    borderColor:     '#E2E8F0',
+  },
+  lockedPlaceholder: {
+    flex:      1,
+    fontSize:  15,
+    color:     '#CBD5E1',
+    fontStyle: 'italic',
+  },
+  scanCardBtn: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               6,
+    paddingVertical:   8,
+    paddingHorizontal: 12,
+    borderRadius:      10,
+    backgroundColor:   BRAND,
+    marginTop:         -2,
+  },
+  scanCardText: {
+    fontSize:   12,
+    fontWeight: '700',
+    color:      '#fff',
+  },
+  plateWarnBanner: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             8,
+    width:           '100%',
+    backgroundColor: '#FEF3C7',
+    borderRadius:    10,
+    borderWidth:     1,
+    borderColor:     '#FCD34D',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom:    10,
+  },
+  plateWarnText: {
+    flex:       1,
+    fontSize:   13,
+    color:      '#92400E',
+    fontWeight: '600',
   },
 })
