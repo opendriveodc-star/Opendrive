@@ -26,6 +26,7 @@ export interface ExchangePointsRequest {
   uid:           string
   points:        number
   walletAddress: string
+  memo?:         string
 }
 export interface ExchangePointsResponse {
   txHash:   string

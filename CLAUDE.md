@@ -6,7 +6,7 @@
 
 ## 0. TRẠNG THÁI (cập nhật mỗi session)
 
-**Cập nhật lần cuối:** 2026-05-30 (session 44 hoàn thành)
+**Cập nhật lần cuối:** 2026-05-31 (session 45 hoàn thành)
 
 ### Đã hoàn thành
 Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên emulator (Android Studio, Pixel 6, API 35).
@@ -347,9 +347,27 @@ Toàn bộ scaffold + implementation hoàn chỉnh. App chạy được trên em
     - `unknown` + có SEAT → block "Không xác định được màu biển số, vui lòng chụp lại rõ hơn" (phân biệt với biển trắng xác nhận)
   - **Tài xế tự chọn:** loại xe + loại hình vận chuyển (không lock sau scan)
 
-### Bàn giao Session 45 – Bắt đầu từ đây
+- **Session 45:** AdMob Rewarded + Mining UX + Exchange redesign ✅
+  - **Fix back button** `(mining)/home.tsx`: `router.back()` → `router.replace('/role-select')` (root screen không có gì để back)
+  - **AdMob Rewarded Ad** (`react-native-google-mobile-ads@14`): tích hợp vào màn hình đào coin; test ads hoạt động; prebuild required khi thêm
+  - **Fix bug điểm tích lũy không cộng được:** `phone.tsx` bỏ qua không lưu `MinerInfo` vào SecureStore khi đăng nhập miner → `minerInfo = null` → `stopMining` silent return; fix: load/create Firestore doc + lưu SecureStore đúng cách
+  - **Fix `session = null`:** `loadMinerData` giờ luôn khởi tạo `{ sessionCount: 0 }` nếu không tìm thấy ở đâu
+  - **0.1 điểm/lượt xem quảng cáo:** Worker 7 đổi sang `doubleValue`, công thức `rounds * 0.1`; UI hiện điểm thập phân; nút đổi thành "Xem quảng cáo (+0,1 điểm)"
+  - **Exchange screen redesign** (`(mining)/exchange.tsx`):
+    - Layout mới: Số coin → Địa chỉ ví + nút Scan → Memo ghi chú
+    - QR scan: 1 nút Scan → action sheet chọn Camera / Thư viện ảnh
+    - **jsQR offline** (`src/utils/qrScannerHtml.ts`): jsQR bundled vào app, scan từ ảnh không cần internet; `metro.config.js` thêm `assetExts.push('html')`
+    - Memo field: đếm bytes UTF-8 (max 28 bytes Stellar MEMO_TEXT), chặn khi đầy
+    - Back button + topBar cùng vị trí với home.tsx (SafeAreaView là root)
+    - Nút Scan + nút Đổi điểm → màu navy
+  - **"Nhận từ người đào coin"** trong ví tài xế: Worker exchange-points luôn thêm text memo `MDC`; wallet.tsx thêm `&join=transactions` vào Horizon API để đọc memo; label mới `history.rewardMiner` vi/en
+  - **ODC coin icon** thay diamond trong màn hình đào: vòng tròn navy viền + nền `BRAND_MUTED` + chữ "ODC" đậm (giống CoinIcon ở role-select)
+  - **Worker 7 + 8 deployed** ✅
+  - **Packages mới:** `react-native-google-mobile-ads@14`, `jsqr@1.4.0`
 
-**Tình trạng:** Scan giấy đăng ký xe hoạt động ổn định. OCR dùng keyword tiếng Anh, phân biệt biển vàng/trắng/unknown.
+### Bàn giao Session 46 – Bắt đầu từ đây
+
+**Tình trạng:** Mining flow hoàn chỉnh — AdMob rewarded, điểm tích lũy, exchange với QR scan offline hoạt động.
 
 **Việc cần làm ngay:**
 - [ ] Xóa `console.log('=== OCR RAW ===')` trong `register.tsx` và `driver-info.tsx` trước khi build production

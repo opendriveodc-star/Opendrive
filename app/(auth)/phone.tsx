@@ -13,10 +13,10 @@ import { useTranslation } from 'react-i18next'
 import { Ionicons } from '@expo/vector-icons'
 import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth'
 import * as SecureStore from 'expo-secure-store'
-import type { UserRole, DriverInfo, CustomerInfo } from '../../src/types'
+import type { UserRole, DriverInfo, CustomerInfo, MinerInfo } from '../../src/types'
 import { SecureStoreKey } from '../../src/types'
 import { auth } from '../../src/services/firebase'
-import { getDriver, getMiner, getCustomerPenalty, setCustomerLockedUntil, checkAndRecordAuthLog } from '../../src/services/firestore'
+import { getDriver, getMiner, createMiner, getCustomerPenalty, setCustomerLockedUntil, checkAndRecordAuthLog } from '../../src/services/firestore'
 import { signOut } from 'firebase/auth'
 
 const BRAND       = '#1A2E5E'
@@ -180,6 +180,18 @@ export default function PhoneAuthScreen() {
       return
     }
     if (role === 'miner') {
+      let doc = await getMiner(uid)
+      if (!doc) {
+        await createMiner(uid, normalizedPhone)
+        doc = await getMiner(uid)
+      }
+      const minerInfo: MinerInfo = {
+        uid,
+        phone:  normalizedPhone,
+        points: doc?.points ?? 0,
+      }
+      await SecureStore.setItemAsync(SecureStoreKey.MINER_INFO, JSON.stringify(minerInfo))
+      await SecureStore.setItemAsync(SecureStoreKey.USER_ROLE, 'miner')
       router.replace('/(mining)/home')
     }
   }

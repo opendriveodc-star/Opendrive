@@ -10,12 +10,23 @@ import { Ionicons } from '@expo/vector-icons'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import * as SecureStore from 'expo-secure-store'
+import { RewardedAd, RewardedAdEventType, TestIds } from 'react-native-google-mobile-ads'
 import { showAlert } from '../../src/components/GlobalAlert'
 import { getMiner } from '../../src/services/firestore'
 import { miningReport } from '../../src/services/cloudflare'
 import { SecureStoreKey } from '../../src/types'
 import type { MinerInfo, MinerSession } from '../../src/types'
 import { ODC } from '../../src/constants'
+
+const AD_UNIT_ID = __DEV__
+  ? TestIds.REWARDED
+  : 'ca-app-pub-3940256099942544/5224354917' // TODO: thay bằng ID thật khi production
+
+function createRewardedAd() {
+  return RewardedAd.createForAdRequest(AD_UNIT_ID, {
+    keywords: ['transportation', 'driving', 'travel'],
+  })
+}
 
 const BRAND       = '#1A2E5E'
 const BRAND_LIGHT = '#E8EDF6'
@@ -30,15 +41,45 @@ export default function MiningHomeScreen() {
   const [isMining,      setIsMining]      = useState(false)
   const [rounds,        setRounds]        = useState(0)
   const [isWatchingAd,  setIsWatchingAd]  = useState(false)
+  const [adLoaded,      setAdLoaded]      = useState(false)
   const [elapsedSec,    setElapsedSec]    = useState(0)
   const [isSaving,      setIsSaving]      = useState(false)
 
   const timerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const roundsRef = useRef(0)
+  const adRef     = useRef(createRewardedAd())
 
   useEffect(() => {
     loadMinerData()
+    loadAd()
   }, [])
+
+  function loadAd() {
+    const ad = adRef.current
+    setAdLoaded(false)
+
+    const unsubLoaded = ad.addAdEventListener(RewardedAdEventType.LOADED, () => {
+      setAdLoaded(true)
+    })
+    const unsubEarned = ad.addAdEventListener(RewardedAdEventType.EARNED_REWARD, () => {
+      roundsRef.current += 1
+      setRounds(roundsRef.current)
+    })
+    // Sau khi quảng cáo đóng (dù xem hết hay bỏ giữa chừng) → tạo ad mới cho lần sau
+    const unsubClosed = ad.addAdEventListener('closed' as any, () => {
+      setIsWatchingAd(false)
+      adRef.current = createRewardedAd()
+      loadAd()
+    })
+
+    ad.load()
+
+    return () => {
+      unsubLoaded()
+      unsubEarned()
+      unsubClosed()
+    }
+  }
 
   useEffect(() => {
     if (isMining) {
@@ -77,18 +118,15 @@ export default function MiningHomeScreen() {
       }
     } else {
       const uid = rawInfo ? (JSON.parse(rawInfo) as MinerInfo).uid : null
+      let s: MinerSession = { sessionCount: 0, lastMiningDate: today }
       if (uid) {
         const doc = await getMiner(uid)
         if (doc) {
-          const today2 = new Date().toISOString().split('T')[0]
-          const s: MinerSession = {
-            sessionCount:   doc.lastMiningDate === today2 ? doc.sessionCount : 0,
-            lastMiningDate: today2,
-          }
-          await SecureStore.setItemAsync(SecureStoreKey.MINER_SESSION, JSON.stringify(s))
-          setSession(s)
+          s = { sessionCount: doc.lastMiningDate === today ? doc.sessionCount : 0, lastMiningDate: today }
         }
       }
+      await SecureStore.setItemAsync(SecureStoreKey.MINER_SESSION, JSON.stringify(s))
+      setSession(s)
     }
   }
 
@@ -101,11 +139,12 @@ export default function MiningHomeScreen() {
 
   async function watchAd() {
     if (isWatchingAd || roundsRef.current >= ODC.MAX_MINING_ROUNDS) return
+    if (!adLoaded) {
+      showAlert(t('common.loading'), t('mining.adLoading'))
+      return
+    }
     setIsWatchingAd(true)
-    await new Promise(resolve => setTimeout(resolve, 2500))   // simulate ad duration
-    roundsRef.current += 1
-    setRounds(roundsRef.current)
-    setIsWatchingAd(false)
+    adRef.current.show()
   }
 
   async function stopMining() {
@@ -144,9 +183,10 @@ export default function MiningHomeScreen() {
     }
   }
 
-  const sessionsLeft = ODC.MAX_SESSIONS_PER_DAY - (session?.sessionCount ?? 0)
-  const canStart     = sessionsLeft > 0
-  const progress     = Math.min(rounds / ODC.MAX_MINING_ROUNDS, 1)
+  const sessionsLeft   = ODC.MAX_SESSIONS_PER_DAY - (session?.sessionCount ?? 0)
+  const canStart       = sessionsLeft > 0
+  const progress       = Math.min(rounds / ODC.MAX_MINING_ROUNDS, 1)
+  const earnedDisplay  = (rounds * 0.1).toFixed(1)  // điểm tích lũy trong phiên hiện tại
   const mm           = String(Math.floor(elapsedSec / 60)).padStart(2, '0')
   const ss           = String(elapsedSec % 60).padStart(2, '0')
   const elapsed      = `${mm}:${ss}`
@@ -156,7 +196,7 @@ export default function MiningHomeScreen() {
       <View style={s.topBar}>
         <TouchableOpacity
           style={s.backBtn}
-          onPress={() => router.back()}
+          onPress={() => router.replace('/role-select')}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
           <Ionicons name="chevron-back" size={22} color={BRAND} />
@@ -175,7 +215,7 @@ export default function MiningHomeScreen() {
               <Text style={s.pointsValue}>{minerInfo?.points ?? 0}</Text>
             </View>
             <TouchableOpacity style={s.exchangeBtn} onPress={() => router.push('/(mining)/exchange')}>
-              <Ionicons name="swap-horizontal" size={20} color={BRAND} />
+              <Ionicons name="swap-horizontal" size={20} color="#fff" />
               <Text style={s.exchangeBtnText}>{t('mining.exchangeShort')}</Text>
             </TouchableOpacity>
           </View>
@@ -216,11 +256,15 @@ export default function MiningHomeScreen() {
         ) : (
           <>
             <View style={s.miningCenter}>
-              <Animated.View style={[s.miningCircle, { transform: [{ scale: pulseAnim }] }]}>
-                <Ionicons name="diamond" size={40} color="#fff" />
+              <Animated.View style={{ transform: [{ scale: pulseAnim }], marginBottom: 16 }}>
+                <View style={s.coinOuter}>
+                  <View style={s.coinInner}>
+                    <Text style={s.coinText}>ODC</Text>
+                  </View>
+                </View>
               </Animated.View>
-              <Text style={s.roundsValue}>{rounds}</Text>
-              <Text style={s.roundsUnit}>{t('mining.outOf', { max: ODC.MAX_MINING_ROUNDS })}</Text>
+              <Text style={s.roundsValue}>{earnedDisplay}</Text>
+              <Text style={s.roundsUnit}>điểm · {rounds}/{ODC.MAX_MINING_ROUNDS} lượt</Text>
               <Text style={s.elapsedTime}>{elapsed}</Text>
             </View>
 
@@ -230,11 +274,11 @@ export default function MiningHomeScreen() {
             <Text style={s.progressPct}>{Math.round(progress * 100)}%</Text>
 
             <TouchableOpacity
-              style={[s.watchBtn, (isWatchingAd || rounds >= ODC.MAX_MINING_ROUNDS) && s.btnDisabled]}
+              style={[s.watchBtn, (!adLoaded || isWatchingAd || rounds >= ODC.MAX_MINING_ROUNDS) && s.btnDisabled]}
               onPress={watchAd}
-              disabled={isWatchingAd || rounds >= ODC.MAX_MINING_ROUNDS}
+              disabled={!adLoaded || isWatchingAd || rounds >= ODC.MAX_MINING_ROUNDS}
             >
-              {isWatchingAd
+              {!adLoaded
                 ? <Text style={s.watchBtnText}>{t('mining.adLoading')}</Text>
                 : <>
                     <Ionicons name="play-circle" size={20} color="#fff" style={{ marginRight: 8 }} />
@@ -266,8 +310,8 @@ const s = StyleSheet.create({
   cardRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   pointsLabel:  { fontSize: 12, color: '#64748B', marginBottom: 4 },
   pointsValue:  { fontSize: 44, fontWeight: '800', color: BRAND, lineHeight: 48 },
-  exchangeBtn:  { backgroundColor: BRAND_LIGHT, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, alignItems: 'center' },
-  exchangeBtnText: { fontSize: 12, fontWeight: '600', color: BRAND, marginTop: 4 },
+  exchangeBtn:  { backgroundColor: BRAND, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, alignItems: 'center' },
+  exchangeBtnText: { fontSize: 12, fontWeight: '600', color: '#fff', marginTop: 4 },
 
   sessionRow:   { flexDirection: 'row', alignItems: 'center', marginTop: 16 },
   sessionLabel: { fontSize: 12, color: '#64748B', marginRight: 8 },
@@ -287,6 +331,9 @@ const s = StyleSheet.create({
 
   miningCenter: { alignItems: 'center', paddingVertical: 20 },
   miningCircle: { width: 100, height: 100, borderRadius: 50, backgroundColor: BRAND, justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
+  coinOuter:  { width: 100, height: 100, borderRadius: 50, borderWidth: 7, borderColor: BRAND, backgroundColor: BRAND_MUTED, alignItems: 'center', justifyContent: 'center', shadowColor: BRAND, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 12, elevation: 6 },
+  coinInner:  { width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: `${BRAND}55`, alignItems: 'center', justifyContent: 'center' },
+  coinText:   { fontSize: 22, fontWeight: '900', color: BRAND, letterSpacing: 2 },
   roundsValue:  { fontSize: 56, fontWeight: '800', color: BRAND, lineHeight: 60 },
   roundsUnit:   { fontSize: 14, color: '#64748B', marginTop: 4 },
   elapsedTime:  { fontSize: 18, color: BRAND, marginTop: 8, fontWeight: '600' },

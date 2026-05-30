@@ -10,6 +10,7 @@ import {
   Networks,
   Horizon,
   Transaction,
+  Memo,
 } from '@stellar/stellar-sdk'
 
 interface WorkerEnv {
@@ -106,11 +107,11 @@ export default {
     const jwtUid     = await verifyFirebaseJWT(authHeader?.replace('Bearer ', '') ?? '')
     if (!jwtUid) return json({ success: false, error: 'Unauthorized' }, 401)
 
-    let body: { uid?: string; points?: number; walletAddress?: string }
+    let body: { uid?: string; points?: number; walletAddress?: string; memo?: string }
     try { body = await request.json() }
     catch { return json({ success: false, error: 'Invalid JSON' }, 400) }
 
-    const { uid, points, walletAddress } = body
+    const { uid, points, walletAddress, memo } = body
     if (!uid || !points || !walletAddress) return json({ success: false, error: 'Missing fields' }, 400)
     if (jwtUid !== uid)                    return json({ success: false, error: 'UID mismatch' }, 403)
     if (points < MIN_POINTS)               return json({ success: false, error: `Min ${MIN_POINTS} points` }, 400)
@@ -141,14 +142,16 @@ export default {
       const odcSent = points - EXCHANGE_FEE_ODC
 
       const distAccount = await server.loadAccount(distributorKp.publicKey())
-      const innerTx = new TransactionBuilder(distAccount, { fee: '100', networkPassphrase: networkPass })
+      const txBuilder = new TransactionBuilder(distAccount, { fee: '100', networkPassphrase: networkPass })
         .addOperation(Operation.payment({
           destination: walletAddress,
           asset:       ODC_ASSET,
           amount:      odcSent.toFixed(7),
         }))
         .setTimeout(60)
-        .build()
+      // Luôn thêm text memo: dùng để wallet.tsx nhận biết giao dịch từ miner
+      txBuilder.addMemo(Memo.text(memo?.trim() || 'MDC'))
+      const innerTx = txBuilder.build()
       innerTx.sign(distributorKp)
 
       const feeBump = TransactionBuilder.buildFeeBumpTransaction(

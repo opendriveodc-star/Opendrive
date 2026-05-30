@@ -85,7 +85,7 @@ async function updateMinerDoc(
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body:    JSON.stringify({
       fields: {
-        points:         { integerValue: String(points) },
+        points:         { doubleValue: points },
         sessionCount:   { integerValue: String(sessionCount) },
         lastMiningDate: { stringValue: lastMiningDate },
       },
@@ -122,8 +122,8 @@ export default {
 
       const today        = new Date().toISOString().split('T')[0]
       const sessionCount = doc.lastMiningDate === today ? doc.sessionCount + 1 : 1
-      const earnedPoints = Math.floor(rounds / 10)
-      const newPoints    = doc.points + earnedPoints
+      const earnedPoints = Math.round(rounds * 0.1 * 10) / 10   // 0.1 điểm/lượt, làm tròn 1 chữ số
+      const newPoints    = Math.round((doc.points + earnedPoints) * 10) / 10
 
       await updateMinerDoc(projectId, accessToken, uid, newPoints, sessionCount, today)
 

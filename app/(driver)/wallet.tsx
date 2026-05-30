@@ -34,8 +34,11 @@ interface PaymentRecord {
 
 function classifyPartner(address: string, label: string, t: (k: string) => string): string {
   if (address === STELLAR.TRANSACTION_ADDRESS) return t('history.txFee')
-  if (address === STELLAR.DISTRIBUTOR_ADDRESS)  return label === 'in' ? t('history.rewardSystem') : t('history.penaltySystem')
-  if (address === STELLAR.ISSUER_ADDRESS)       return t('history.odcIssue')
+  if (address === STELLAR.DISTRIBUTOR_ADDRESS) {
+    if (label === 'in_miner') return t('history.rewardMiner')
+    return label === 'in' ? t('history.rewardSystem') : t('history.penaltySystem')
+  }
+  if (address === STELLAR.ISSUER_ADDRESS) return t('history.odcIssue')
   return address.slice(0, 6) + '...' + address.slice(-4)
 }
 
@@ -83,7 +86,7 @@ export default function WalletScreen() {
     setTxError(null)
     try {
       const limit = autoLoad ? 200 : PAGE_SIZE
-      const url = `${STELLAR.HORIZON_URL}/accounts/${address}/payments?limit=${limit}&order=desc`
+      const url = `${STELLAR.HORIZON_URL}/accounts/${address}/payments?limit=${limit}&order=desc&join=transactions`
         + (pagingToken ? `&cursor=${pagingToken}` : '')
       const res = await fetch(url)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -94,9 +97,13 @@ export default function WalletScreen() {
           r.type === 'create_account'
         )
       const records: PaymentRecord[] = rawRecords.map((r: any) => {
-        const incoming = r.type === 'create_account' || r.to === address
-        const partner  = r.type === 'create_account' ? r.funder ?? '' : (incoming ? r.from : r.to)
-        const amount   = parseFloat(r.amount ?? r.starting_balance ?? '0')
+        const incoming  = r.type === 'create_account' || r.to === address
+        const partner   = r.type === 'create_account' ? r.funder ?? '' : (incoming ? r.from : r.to)
+        const amount    = parseFloat(r.amount ?? r.starting_balance ?? '0')
+        const memoType  = r.transaction?.memo_type ?? ''
+        const memoText  = r.transaction?.memo ?? ''
+        // Giao dịch từ miner: text memo (MDC hoặc ghi chú người dùng)
+        const isMinerTx = memoType === 'text' && memoText.length > 0
         return {
           id:        r.id,
           hash:      r.transaction_hash,
@@ -104,7 +111,7 @@ export default function WalletScreen() {
           amount,
           incoming,
           partner,
-          label:     incoming ? 'in' : 'out',
+          label:     incoming ? (isMinerTx ? 'in_miner' : 'in') : 'out',
         }
       })
       setPayments(prev => pagingToken ? [...prev, ...records] : records)
