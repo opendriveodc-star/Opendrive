@@ -98,7 +98,18 @@
     "creating":            "Creating account...",
     "welcome":             "Welcome {{name}}!",
     "welcomeBonus":        "You received 100 ODC to get started",
-    "avatarHint":          "Your photo helps passengers trust and choose you"
+    "avatarHint":          "Your photo helps passengers trust and choose you",
+    "scanBtn":             "Scan registration card",
+    "scanPlaceholder":     "Scan registration card",
+    "scanIncompleteTitle": "Incomplete scan",
+    "scanIncompleteBody":  "Could not read: {{fields}}. Retake with better lighting.",
+    "scanError":           "Could not read registration card. Please try again.",
+    "scanRequired":        "Please scan vehicle registration card",
+    "plateInvalidYellow":  "Invalid vehicle – only commercial vehicles (yellow plate) accepted",
+    "plateInvalidUnknown": "Cannot determine plate color, please retake photo clearly",
+    "scanMissingPlate":    "license plate",
+    "scanMissingBrand":    "brand",
+    "scanMissingColor":    "color"
   },
   "roleSelect": {
     "slogan":      "Connecting journeys – Opening tomorrow",

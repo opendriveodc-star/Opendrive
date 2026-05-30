@@ -104,9 +104,10 @@ export function parseVehicleCard(rawText: string): ParsedVehicleCard {
   // OCR thường tách label và số ra nhiều dòng → tìm số đứng độc lập trong 20 dòng kế
   let seats = 0
   for (let i = 0; i < normLines.length; i++) {
-    if (normLines[i].includes('SEAT') || normLines[i].includes('SIT')) {
+    const line = normLines[i]
+    if (line.includes('SEAT') || line.includes('SIT')) {
       // Thử tìm số trên cùng dòng trước
-      const sameLine = normLines[i].match(/[:\s]\s*(\d{1,2})\s*$/)
+      const sameLine = line.match(/[:\s]\s*(\d{1,2})\s*$/)
       if (sameLine) { seats = parseInt(sameLine[1]); break }
       // Không có → tìm trong 20 dòng tiếp
       for (let j = i + 1; j < Math.min(i + 20, normLines.length); j++) {

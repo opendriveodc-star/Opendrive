@@ -66,13 +66,10 @@ export default function RegisterScreen() {
   const vehicleOptions = currentModel.vehicles
 
   function handleModelChange(model: TransportModel) {
-    if (transportLocked) return
     setTransportModel(model)
-    if (!cardScanned) {
-      const cfg = TRANSPORT_MODELS.find(m => m.key === model)!
-      if (!cfg.vehicles.find(v => v.key === vehicleType)) {
-        setVehicleType(cfg.vehicles[0].key)
-      }
+    const cfg = TRANSPORT_MODELS.find(m => m.key === model)!
+    if (!cfg.vehicles.find(v => v.key === vehicleType)) {
+      setVehicleType(cfg.vehicles[0].key)
     }
   }
 
@@ -95,52 +92,35 @@ export default function RegisterScreen() {
     setScanLoading(true)
     try {
       const recognized = await MlKitTextRecognition.recognize(picked.assets[0].uri)
-      console.log('=== OCR RAW ===\n', recognized.text)
       const parsed = parseVehicleCard(recognized.text)
-
-      // Chặn biển trắng/xanh cho ô tô và xe tải (xe máy miễn kiểm tra)
       const isMotorbike = parsed.vehicleType === 'motorbike'
-      if (isMotorbike) {
-        setPlateInvalid(false)
-        setPlateInvalidMsg('')
-      } else if (parsed.plateColor === 'yellow') {
-        setPlateInvalid(false)
-        setPlateInvalidMsg('')
-      } else if (parsed.plateColor === 'white' || parsed.plateColor === 'blue') {
-        setPlateInvalid(true)
-        setPlateInvalidMsg('Xe biển trắng/xanh không đủ điều kiện đăng ký tài xế')
+
+      if (parsed.plateColor === 'yellow') {
+        setPlateInvalid(false); setPlateInvalidMsg('')
+      } else if (parsed.plateColor === 'blue') {
+        setPlateInvalid(true); setPlateInvalidMsg(t('register.plateInvalidYellow'))
       } else {
-        // unknown – có thể bị che hoặc ảnh không rõ
-        setPlateInvalid(true)
-        setPlateInvalidMsg('Không xác định được màu biển số, vui lòng chụp lại rõ hơn')
+        if (isMotorbike) {
+          setPlateInvalid(false); setPlateInvalidMsg('')
+        } else {
+          setPlateInvalid(true); setPlateInvalidMsg(t('register.plateInvalidYellow'))
+        }
       }
 
       if (parsed.licensePlate) setLicensePlate(parsed.licensePlate)
       if (parsed.vehicleBrand)  setVehicleBrand(parsed.vehicleBrand)
       if (parsed.vehicleColor)  setVehicleColor(parsed.vehicleColor)
-      if (parsed.vehicleType) {
-        const vt = parsed.vehicleType as VehicleKey
-        setVehicleType(vt)
-        if (['car4', 'car6'].includes(vt)) {
-          setTransportModel('passenger'); setTransportLocked(true)
-        } else if (['pickup', 'truck'].includes(vt)) {
-          setTransportModel('freight'); setTransportLocked(true)
-        } else {
-          setTransportLocked(false)
-        }
-      }
       setCardScanned(true)
       const missing = ([
-        !parsed.licensePlate && 'biển số',
-        !parsed.vehicleBrand  && 'nhãn hiệu',
-        !parsed.vehicleColor  && 'màu xe',
-        !parsed.vehicleType   && 'loại xe',
+        !parsed.licensePlate && t('register.scanMissingPlate'),
+        !parsed.vehicleBrand  && t('register.scanMissingBrand'),
+        !parsed.vehicleColor  && t('register.scanMissingColor'),
       ] as (string | false)[]).filter(Boolean) as string[]
       if (missing.length) {
-        showAlert('Scan chưa đủ', `Không đọc được: ${missing.join(', ')}. Chụp lại rõ hơn hoặc đủ ánh sáng nhé.`)
+        showAlert(t('register.scanIncompleteTitle'), t('register.scanIncompleteBody', { fields: missing.join(', ') }))
       }
     } catch {
-      showAlert(t('common.error'), 'Không đọc được thẻ đăng ký. Vui lòng thử lại.')
+      showAlert(t('common.error'), t('register.scanError'))
     } finally {
       setScanLoading(false)
     }
@@ -150,7 +130,6 @@ export default function RegisterScreen() {
   const [scanning,        setScanning]        = useState(false)
   const [cardScanned,     setCardScanned]     = useState(false)
   const [scanLoading,     setScanLoading]     = useState(false)
-  const [transportLocked, setTransportLocked] = useState(false)
   const [plateInvalid,    setPlateInvalid]    = useState(false)
   const [plateInvalidMsg, setPlateInvalidMsg] = useState('')
   const [termsChecked,    setTermsChecked]    = useState(false)
@@ -231,7 +210,7 @@ export default function RegisterScreen() {
       return
     }
     if (!cardScanned || !vehicleBrand || !licensePlate) {
-      showAlert(t('common.error'), 'Vui lòng scan thẻ đăng ký xe')
+      showAlert(t('common.error'), t('register.scanRequired'))
       return
     }
     if (!termsChecked) {
@@ -408,9 +387,9 @@ export default function RegisterScreen() {
             return (
               <TouchableOpacity
                 key={m.key}
-                style={[s.modelBtn, active && s.modelBtnActive, transportLocked && !active && { opacity: 0.35 }]}
+                style={[s.modelBtn, active && s.modelBtnActive]}
                 onPress={() => handleModelChange(m.key)}
-                activeOpacity={transportLocked ? 1 : 0.8}
+                activeOpacity={0.8}
               >
                 <Ionicons name={m.icon as any} size={20} color={active ? '#fff' : BRAND} />
                 <Text style={[s.modelBtnText, active && s.modelBtnTextActive]}>
@@ -422,22 +401,9 @@ export default function RegisterScreen() {
         </View>
 
         {/* ── Thông tin xe ── */}
-        <View style={{ flexDirection: 'row', width: '100%', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={s.sectionHeader}>
-            <View style={s.sectionAccent} />
-            <Text style={s.sectionTitle}>{t('register.sectionVehicleInfo')}</Text>
-          </View>
-          <TouchableOpacity style={s.scanCardBtn} onPress={scanVehicleCard} disabled={scanLoading} activeOpacity={0.75}>
-            {scanLoading
-              ? <ActivityIndicator size="small" color="#fff" />
-              : <>
-                  <Ionicons name={cardScanned ? 'checkmark-circle' : 'scan-outline'} size={15} color={cardScanned ? '#86EFAC' : '#fff'} />
-                  <Text style={s.scanCardText}>
-                    {cardScanned ? 'Scan lại' : 'Scan thẻ ĐK xe'}
-                  </Text>
-                </>
-            }
-          </TouchableOpacity>
+        <View style={s.sectionHeader}>
+          <View style={s.sectionAccent} />
+          <Text style={s.sectionTitle}>{t('register.sectionVehicleInfo')}</Text>
         </View>
 
         {/* Loại xe – scrollable 1 hàng, card dọc có thông số */}
@@ -453,9 +419,9 @@ export default function RegisterScreen() {
             return (
               <TouchableOpacity
                 key={key}
-                style={[s.vehicleBtn, vehicleOptions.length <= 3 ? { flex: 1 } : { width: VEHICLE_BTN_W }, active && s.vehicleBtnActive, cardScanned && !active && { opacity: 0.35 }]}
-                onPress={cardScanned ? undefined : () => setVehicleType(key)}
-                activeOpacity={cardScanned ? 1 : 0.8}
+                style={[s.vehicleBtn, vehicleOptions.length <= 3 ? { flex: 1 } : { width: VEHICLE_BTN_W }, active && s.vehicleBtnActive]}
+                onPress={() => setVehicleType(key)}
+                activeOpacity={0.8}
               >
                 <Ionicons name={icon as any} size={26} color={active ? '#fff' : BRAND} />
                 <Text style={[s.vehicleBtnText, active && s.vehicleBtnTextActive]}>
@@ -480,10 +446,21 @@ export default function RegisterScreen() {
           <Text style={s.scrollHint}>← Trượt qua lại để xem tiếp →</Text>
         )}
 
+        {/* Nút scan nằm giữa — phân cách phần tự chọn và phần scan tự điền */}
+        <TouchableOpacity style={s.scanCardBtnCenter} onPress={scanVehicleCard} disabled={scanLoading} activeOpacity={0.75}>
+          {scanLoading
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <>
+                <Ionicons name={cardScanned ? 'checkmark-circle-outline' : 'scan-outline'} size={18} color="#fff" />
+                <Text style={s.scanCardText}>{t('register.scanBtn')}</Text>
+              </>
+          }
+        </TouchableOpacity>
+
         <View style={[s.inputWrap, s.lockedWrap]}>
           <Ionicons name="car-outline" size={18} color={BRAND} style={s.inputIcon} />
           <Text style={vehicleBrand ? [s.input, { textTransform: 'uppercase' }] : s.lockedPlaceholder} numberOfLines={1}>
-            {vehicleBrand || 'Scan thẻ đăng ký xe'}
+            {vehicleBrand || t('register.scanPlaceholder')}
           </Text>
           <Ionicons name="lock-closed-outline" size={13} color={vehicleBrand ? BRAND : '#CBD5E1'} />
         </View>
@@ -491,7 +468,7 @@ export default function RegisterScreen() {
         <View style={[s.inputWrap, s.lockedWrap]}>
           <Ionicons name="color-palette-outline" size={18} color={BRAND} style={s.inputIcon} />
           <Text style={vehicleColor ? s.input : s.lockedPlaceholder} numberOfLines={1}>
-            {vehicleColor || 'Scan thẻ đăng ký xe'}
+            {vehicleColor || t('register.scanPlaceholder')}
           </Text>
           <Ionicons name="lock-closed-outline" size={13} color={vehicleColor ? BRAND : '#CBD5E1'} />
         </View>
@@ -499,7 +476,7 @@ export default function RegisterScreen() {
         <View style={[s.inputWrap, s.lockedWrap]}>
           <Ionicons name="card-outline" size={18} color={BRAND} style={s.inputIcon} />
           <Text style={licensePlate ? [s.input, { textTransform: 'uppercase' }] : s.lockedPlaceholder} numberOfLines={1}>
-            {licensePlate || 'Scan thẻ đăng ký xe'}
+            {licensePlate || t('register.scanPlaceholder')}
           </Text>
           <Ionicons name="lock-closed-outline" size={13} color={licensePlate ? BRAND : '#CBD5E1'} />
         </View>
@@ -934,10 +911,22 @@ const s = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius:      10,
     backgroundColor:   BRAND,
-    marginTop:         -2,
+  },
+  scanCardBtnCenter: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'center',
+    alignSelf:         'center',
+    gap:               8,
+    paddingVertical:   10,
+    paddingHorizontal: 20,
+    borderRadius:      12,
+    backgroundColor:   BRAND,
+    marginTop:         -4,
+    marginBottom:      16,
   },
   scanCardText: {
-    fontSize:   12,
+    fontSize:   13,
     fontWeight: '700',
     color:      '#fff',
   },

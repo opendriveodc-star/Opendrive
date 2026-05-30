@@ -98,7 +98,18 @@
     "creating":            "Đang tạo tài khoản...",
     "welcome":             "Chào mừng {{name}}!",
     "welcomeBonus":        "Bạn nhận được 100 ODC để bắt đầu",
-    "avatarHint":          "Ảnh đại diện giúp khách hàng tin tưởng và chọn bạn hơn"
+    "avatarHint":          "Ảnh đại diện giúp khách hàng tin tưởng và chọn bạn hơn",
+    "scanBtn":             "Scan thẻ đăng ký xe",
+    "scanPlaceholder":     "Scan thẻ đăng ký xe",
+    "scanIncompleteTitle": "Scan chưa đủ",
+    "scanIncompleteBody":  "Không đọc được: {{fields}}. Chụp lại rõ hơn hoặc đủ ánh sáng nhé.",
+    "scanError":           "Không đọc được thẻ đăng ký. Vui lòng thử lại.",
+    "scanRequired":        "Vui lòng scan thẻ đăng ký xe",
+    "plateInvalidYellow":  "Xe không hợp lệ – hệ thống chỉ chấp nhận xe kinh doanh biển vàng",
+    "plateInvalidUnknown": "Không xác định được màu biển số, vui lòng chụp lại rõ hơn",
+    "scanMissingPlate":    "biển số",
+    "scanMissingBrand":    "nhãn hiệu",
+    "scanMissingColor":    "màu xe"
   },
   "roleSelect": {
     "slogan":      "Kết nối hành trình – Mở lối tương lai",
